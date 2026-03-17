@@ -1,0 +1,176 @@
+"""
+Azure Function: Cloudflare Firewall Events to Azure Log Analytics
+Timer trigger runs every 1 minute, pulls firewall events from Cloudflare
+GraphQL API for configured zones, and ingests them into a custom Log Analytics table.
+"""
+
+import os
+import json
+import logging
+import datetime
+import azure.functions as func
+from azure.identity import DefaultAzureCredential
+from azure.monitor.ingestion import LogsIngestionClient
+from azure.core.exceptions import HttpResponseError
+import requests
+
+app = func.FunctionApp()
+
+GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql"
+
+FIREWALL_QUERY = """
+{
+  viewer {
+    zones(filter: {zoneTag: "%s"}) {
+      firewallEventsAdaptive(
+        filter: {datetime_gt: "%s", datetime_lt: "%s"}
+        limit: 10000
+        orderBy: [datetime_ASC]
+      ) {
+        datetime
+        action
+        clientIP
+        clientRequestPath
+        clientRequestQuery
+        clientRequestHTTPMethodName
+        clientRequestHTTPHost
+        clientRequestHTTPProtocol
+        clientCountryName
+        clientAsn
+        clientASNDescription
+        clientIPClass
+        userAgent
+        rayName
+        description
+        source
+        ruleId
+        rulesetId
+        clientRefererHost
+        edgeResponseStatus
+        sampleInterval
+        kind
+      }
+    }
+  }
+}
+"""
+
+
+def query_cloudflare(cf_token: str, zone_id: str, time_start: str, time_end: str) -> list:
+    """Query Cloudflare GraphQL API for firewall events in a time window."""
+    headers = {
+        "Authorization": f"Bearer {cf_token}",
+        "Content-Type": "application/json",
+    }
+    query = FIREWALL_QUERY % (zone_id, time_start, time_end)
+    payload = json.dumps({"query": query})
+
+    response = requests.post(GRAPHQL_URL, headers=headers, data=payload, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+
+    if result.get("errors"):
+        error_msg = result["errors"][0].get("message", "Unknown GraphQL error")
+        logging.error("Cloudflare GraphQL error for zone %s: %s", zone_id, error_msg)
+        return []
+
+    zones = result.get("data", {}).get("viewer", {}).get("zones", [])
+    if not zones:
+        return []
+
+    return zones[0].get("firewallEventsAdaptive", [])
+
+
+def transform_events(events: list, zone_name: str) -> list:
+    """Transform Cloudflare events into the Log Analytics table schema."""
+    transformed = []
+    for event in events:
+        transformed.append({
+            "TimeGenerated": event["datetime"],
+            "Zone": zone_name,
+            "Action": event.get("action", ""),
+            "ClientIP": event.get("clientIP", ""),
+            "ClientCountry": event.get("clientCountryName", ""),
+            "ClientASN": str(event.get("clientAsn", "")),
+            "ClientASNDescription": event.get("clientASNDescription", ""),
+            "RequestPath": event.get("clientRequestPath", ""),
+            "RequestQuery": event.get("clientRequestQuery", ""),
+            "RequestMethod": event.get("clientRequestHTTPMethodName", ""),
+            "RequestHost": event.get("clientRequestHTTPHost", ""),
+            "UserAgent": event.get("userAgent", ""),
+            "RayID": event.get("rayName", ""),
+            "RuleDescription": event.get("description", ""),
+            "Source": event.get("source", ""),
+            "RuleId": event.get("ruleId", ""),
+            "RefererHost": event.get("clientRefererHost", ""),
+            "EdgeResponseStatus": event.get("edgeResponseStatus", 0),
+            "ClientIPClass": event.get("clientIPClass", ""),
+            "HttpProtocol": event.get("clientRequestHTTPProtocol", ""),
+            "RulesetId": event.get("rulesetId", ""),
+            "SampleInterval": event.get("sampleInterval", 1),
+            "Kind": event.get("kind", ""),
+        })
+    return transformed
+
+
+def send_to_log_analytics(logs: list, dcr_id: str, stream_name: str, endpoint: str):
+    """Send transformed logs to Azure Log Analytics via Ingestion API."""
+    credential = DefaultAzureCredential()
+    client = LogsIngestionClient(endpoint=endpoint, credential=credential)
+
+    try:
+        client.upload(rule_id=dcr_id, stream_name=stream_name, logs=logs)
+        logging.info("Successfully uploaded %d events to Log Analytics", len(logs))
+    except HttpResponseError as e:
+        logging.error("Failed to upload logs: %s", e.message)
+        raise
+
+
+@app.timer_trigger(
+    schedule="0 */1 * * * *",
+    arg_name="timer",
+    run_on_startup=False,
+)
+def cf_log_ingestion(timer: func.TimerRequest) -> None:
+    """Timer trigger: runs every 1 minute to pull Cloudflare firewall events."""
+
+    if timer.past_due:
+        logging.warning("Timer is past due, running anyway")
+
+    cf_token = os.environ["CF_API_TOKEN"]
+    dcr_id = os.environ["DCR_IMMUTABLE_ID"]
+    stream_name = os.environ.get("DCR_STREAM_NAME", "Custom-CloudflareFirewall_CL")
+    endpoint = os.environ["DCR_ENDPOINT"]
+    zones = json.loads(os.environ["CF_ZONES"])
+
+    # 3-minute window with 2-minute overlap to catch Cloudflare ingestion delay
+    now = datetime.datetime.now(datetime.timezone.utc)
+    time_end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    time_start = (now - datetime.timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    logging.info("Querying Cloudflare: %s to %s", time_start, time_end)
+
+    all_events = []
+    for zone in zones:
+        events = query_cloudflare(cf_token, zone["id"], time_start, time_end)
+        logging.info("Zone %s: %d events", zone["name"], len(events))
+        transformed = transform_events(events, zone["name"])
+        all_events.extend(transformed)
+
+    if not all_events:
+        logging.info("No events to ingest")
+        return
+
+    # Deduplicate by RayID (handles the overlap between runs)
+    seen = set()
+    unique_events = []
+    for event in all_events:
+        ray_id = event["RayID"]
+        if ray_id and ray_id not in seen:
+            seen.add(ray_id)
+            unique_events.append(event)
+        elif not ray_id:
+            unique_events.append(event)
+
+    logging.info("Total unique events to ingest: %d", len(unique_events))
+    send_to_log_analytics(unique_events, dcr_id, stream_name, endpoint)
