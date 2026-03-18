@@ -1,0 +1,34 @@
+// ============================================================================
+// Single IP Deep-Dive — CloudflareFirewall_CL
+// ============================================================================
+// Full forensics for a single IP. Replace the target_ip value.
+// Shows every firewall event with full request detail.
+// ============================================================================
+
+let target_ip = "<REPLACE_WITH_IP>";
+let lookback = 7d;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where ClientIP == target_ip
+| project
+    TimeGenerated,
+    Zone,
+    Action,
+    Source,
+    RuleDescription,
+    RuleId,
+    RequestMethod,
+    RequestHost,
+    RequestPath,
+    RequestQuery,
+    EdgeResponseStatus,
+    HttpProtocol,
+    UserAgent,
+    RayID,
+    ClientCountry,
+    ClientASNDescription,
+    ClientIPClass,
+    RefererHost,
+    SampleInterval,
+    Kind
+| order by TimeGenerated desc

@@ -1,0 +1,20 @@
+// ============================================================================
+// Geographic Threat Heatmap — CloudflareFirewall_CL
+// ============================================================================
+// Country-level breakdown of blocked/challenged traffic with attacker
+// diversity metrics. Good for workbook map visualizations.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge", "js_challenge")
+| summarize
+    EstimatedEvents  = sum(SampleInterval),
+    UniqueIPs        = dcount(ClientIP),
+    UniqueASNs       = dcount(ClientASNDescription),
+    TopASNs          = make_set(ClientASNDescription, 5),
+    TopActions       = make_set(Action, 5),
+    TopPaths         = make_set(RequestPath, 10)
+    by ClientCountry
+| order by EstimatedEvents desc

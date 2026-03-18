@@ -114,35 +114,66 @@ The script will:
 6. Configure app settings with Key Vault references
 7. Deploy the function code
 
-## Querying the Data
+## KQL Queries
 
-Once events start flowing, query them in Log Analytics:
+The `queries/` folder contains 42 ready-to-use KQL queries organised into four categories. All queries use `sum(SampleInterval)` instead of `count()` to correct for Cloudflare adaptive sampling.
+
+### Dashboard (`queries/dashboard/`)
+
+10 operational queries for day-to-day monitoring: security overview tiles, top blocked IPs, WAF rule effectiveness, geographic threats, targeted endpoints, ASN intelligence, and IP deep-dive.
+
+### Alerts (`queries/alerts/`)
+
+10 queries designed for Azure Monitor alert rules: block spikes, new source countries, distributed attacks, path scanning, rate-limit surges, suspicious IP passthrough, ML-triggered anomalies, new rules firing, multi-zone attackers, and data ingestion gaps.
+
+### Threat Hunting (`queries/hunting/`)
+
+10 proactive hunting queries: attack campaign clustering with `autocluster()`, repeat offenders, user-agent analysis, hourly heatmaps, credential stuffing patterns, HTTP method abuse, referer analysis, week-over-week comparisons, logged-but-not-blocked review, and status code analysis.
+
+### ML & Trends (`queries/trends/`)
+
+12 machine-learning queries using KQL time-series functions: volume anomaly detection (`series_decompose_anomalies`), per-action/per-zone/per-source anomalies, anomaly scoring tables, block-rate anomalies, unique-IP anomalies, root-cause correlation, traffic forecasting (`series_decompose_forecast`), seasonality detection (`series_periods_detect`), full time-series decomposition, and country-level anomalies.
+
+### Quick Start
+
+Run any `.kql` file directly in the Log Analytics query editor:
 
 ```kusto
-// All events from the last hour
+// Example: security overview with sampling correction
 CloudflareFirewall_CL
-| where TimeGenerated > ago(1h)
-| project TimeGenerated, Zone, Action, ClientIP, ClientCountry, RequestPath, Source, RuleDescription
-| order by TimeGenerated desc
-
-// Top blocked IPs
-CloudflareFirewall_CL
-| where Action == "block"
-| summarize Count = count() by ClientIP, ClientCountry
-| order by Count desc
-| take 20
-
-// Events by source type
-CloudflareFirewall_CL
-| summarize Count = count() by Source
-| order by Count desc
-
-// Suspicious activity from hosting/datacenter IPs
-CloudflareFirewall_CL
-| where ClientIPClass != "clean"
-| summarize Count = count() by ClientIP, ClientIPClass, ClientASNDescription
-| order by Count desc
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    Countries       = dcount(ClientCountry),
+    BlockRate       = round(100.0 * sumif(SampleInterval, Action == "block") / max_of(sum(SampleInterval), 1), 1)
 ```
+
+## Workbook
+
+The `workbook/` folder contains a deployment script that creates an Azure Monitor Workbook for visualising the firewall data. The workbook is a single scrollable page with:
+
+- **Security summary tiles** — total events, unique IPs, countries, block rate, zones, active rules
+- **Events by action over time** — area chart with hourly granularity
+- **Source breakdown** — pie chart of security products (WAF, rate limiting, bot fight, etc.)
+- **Top blocked IPs** — table with country, ASN, IP class, targeted paths, and triggering rules
+- **Threat intelligence** — blocked traffic by country and top ASN threat sources
+- **WAF rule effectiveness** — hit counts, attacker diversity (broad vs narrow), top paths per rule
+- **Targeted endpoints** — most-hit paths with HTTP status code distribution
+- **ML anomaly detection** — 14-day volume anomaly timechart, scored anomaly table, 24h traffic forecast
+- **Threat hunting** — autocluster attack campaigns, repeat offenders, user-agent category breakdown
+- **IP investigation** — enter any IP to see its full summary and event log
+
+### Deploy the Workbook
+
+```powershell
+.\workbook\deploy-workbook.ps1 `
+    -SubscriptionId "<your-subscription-id>" `
+    -ResourceGroup  "<your-resource-group>" `
+    -WorkspaceName  "<your-workspace-name>" `
+    -Location       "uksouth"
+```
+
+The script deploys via the Azure Monitor Workbooks REST API (`2023-06-01`). It requires the Azure CLI logged in with Contributor access on the resource group.
 
 ## How It Works
 
@@ -220,13 +251,20 @@ Daily caps are configured by default (1 GB for Log Analytics, 0.5 GB for App Ins
 
 ```
 cf-log-ingestion/
-├── function_app.py      # Azure Function (timer trigger, 1-min interval)
-├── requirements.txt     # Python dependencies
-├── host.json            # Functions host configuration
+├── function_app.py          # Azure Function (timer trigger, 1-min interval)
+├── requirements.txt         # Python dependencies
+├── host.json                # Functions host configuration
 ├── .gitignore
-└── infra/
-    ├── main.bicep       # Azure infrastructure (Bicep template)
-    └── deploy.ps1       # One-step deployment script
+├── infra/
+│   ├── main.bicep           # Azure infrastructure (Bicep template)
+│   └── deploy.ps1           # One-step deployment script
+├── queries/
+│   ├── dashboard/           # 10 operational monitoring queries
+│   ├── alerts/              # 10 alert rule queries
+│   ├── hunting/             # 10 threat hunting queries
+│   └── trends/              # 12 ML anomaly detection queries
+└── workbook/
+    └── deploy-workbook.ps1  # Workbook deployment script
 ```
 
 ## License

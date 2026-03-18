@@ -1,0 +1,23 @@
+// ============================================================================
+// ASN Threat Intelligence — CloudflareFirewall_CL
+// ============================================================================
+// Identifies which Autonomous Systems (hosting providers, ISPs, cloud
+// platforms) are generating the most firewall events. Useful for deciding
+// whether to block entire ASNs or create custom firewall rules.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    Countries       = make_set(ClientCountry, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopRules        = make_set(RuleDescription, 5),
+    IPClasses       = make_set(ClientIPClass, 5)
+    by ClientASN, ClientASNDescription
+| extend EventsPerIP = round(toreal(EstimatedEvents) / max_of(UniqueIPs, 1), 1)
+| order by EstimatedEvents desc
+| take 30

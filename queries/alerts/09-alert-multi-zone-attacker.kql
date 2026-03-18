@@ -1,0 +1,27 @@
+// ============================================================================
+// ALERT: Single IP Targeting Multiple Zones — CloudflareFirewall_CL
+// ============================================================================
+// Fires when a single IP triggers firewall events across multiple zones.
+// Indicates a threat actor probing your entire Cloudflare portfolio,
+// not just one site. Strong signal for IP blocking at the account level.
+//
+// Schedule: Run every 15 minutes, lookback 1 hour
+// Severity: High
+// ============================================================================
+
+let evaluation_window = 1h;
+let zone_threshold = 2;  // Minimum zones hit to trigger
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where Action in ("block", "managed_challenge", "challenge", "js_challenge")
+| summarize
+    ZonesTargeted   = dcount(Zone),
+    Zones           = make_set(Zone, 20),
+    EstimatedEvents = sum(SampleInterval),
+    Actions         = make_set(Action, 10),
+    TopPaths        = make_set(RequestPath, 15),
+    TopRules        = make_set(RuleDescription, 5),
+    Sources         = make_set(Source, 10)
+    by ClientIP, ClientCountry, ClientASNDescription
+| where ZonesTargeted >= zone_threshold
+| order by ZonesTargeted desc, EstimatedEvents desc

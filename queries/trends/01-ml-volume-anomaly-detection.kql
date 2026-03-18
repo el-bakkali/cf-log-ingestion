@@ -1,0 +1,30 @@
+// ============================================================================
+// ML: Traffic Volume Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Uses series_decompose_anomalies() to detect statistically significant
+// spikes and dips in firewall event volume. The function decomposes the
+// time series into seasonal + trend + residual components, then scores
+// outliers in the residual using Tukey's fence test.
+//
+// Threshold: 1.5 = mild anomalies, 3.0 = strong anomalies only
+// Seasonality: -1 = auto-detect (daily/weekly patterns)
+// Trend: linefit = linear regression for trending traffic
+//
+// Anomaly scores: >1.5 or <-1.5 = mild, >3.0 or <-3.0 = strong
+// ad_flag: +1 = spike, -1 = dip, 0 = normal
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 1.5;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Firewall Event Volume Anomaly Detection (14d)'
+    )

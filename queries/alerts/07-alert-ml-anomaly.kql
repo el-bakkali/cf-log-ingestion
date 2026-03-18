@@ -1,0 +1,48 @@
+// ============================================================================
+// ALERT: ML-Based Anomaly Alert — CloudflareFirewall_CL
+// ============================================================================
+// Uses series_decompose_anomalies() directly in an alert query.
+// Detects when the most recent data points are anomalous compared to
+// the historical baseline. This is the most sophisticated alert — it
+// adapts to your traffic patterns automatically.
+//
+// Schedule: Run every 15 minutes, lookback 3 days (for ML baseline)
+// Severity: Dynamic (based on anomaly score)
+// ============================================================================
+
+let baseline_lookback = 3d;
+let grain = 15m;
+let threshold = 2.5;     // Higher = fewer false positives
+let test_points = 1;     // Evaluate the most recent data point
+CloudflareFirewall_CL
+| where TimeGenerated > ago(baseline_lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(baseline_lookback) to now() step grain
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit', test_points)
+| mv-expand
+    TimeGenerated   to typeof(datetime),
+    EstimatedEvents to typeof(double),
+    AnomalyFlag     to typeof(double),
+    AnomalyScore    to typeof(double),
+    ExpectedEvents  to typeof(double)
+// Only the most recent data point (the one we're alerting on)
+| top 1 by TimeGenerated desc
+| where AnomalyFlag != 0
+| extend
+    Direction = iff(AnomalyFlag > 0, "Spike", "Dip"),
+    Severity  = case(
+        abs(AnomalyScore) >= 5.0, "Critical",
+        abs(AnomalyScore) >= 3.0, "High",
+        "Medium"
+    ),
+    Deviation = round(EstimatedEvents - ExpectedEvents, 0)
+| project
+    TimeGenerated,
+    EstimatedEvents = round(EstimatedEvents, 0),
+    ExpectedEvents  = round(ExpectedEvents, 0),
+    Deviation,
+    AnomalyScore    = round(AnomalyScore, 2),
+    Direction,
+    Severity

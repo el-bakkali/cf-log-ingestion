@@ -1,0 +1,25 @@
+// ============================================================================
+// Top Blocked IPs — CloudflareFirewall_CL
+// ============================================================================
+// Identifies the most aggressively blocked source IPs with full context:
+// country, ASN, targeted paths, matched rules, and IP classification.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action == "block"
+| summarize
+    EstimatedBlocks = sum(SampleInterval),
+    FirstSeen       = min(TimeGenerated),
+    LastSeen        = max(TimeGenerated),
+    Zones           = make_set(Zone, 10),
+    Countries       = make_set(ClientCountry, 5),
+    ASNs            = make_set(ClientASNDescription, 3),
+    TopPaths        = make_set(RequestPath, 10),
+    TopRules        = make_set(RuleDescription, 5),
+    Sources         = make_set(Source, 10),
+    IPClass         = take_any(ClientIPClass)
+    by ClientIP
+| order by EstimatedBlocks desc
+| take 50

@@ -1,0 +1,22 @@
+// ============================================================================
+// Security Overview Dashboard — CloudflareFirewall_CL
+// Workspace: law-cf-security
+// ============================================================================
+// Hourly firewall event breakdown with sampling correction.
+// Use: Pin to workbook or dashboard for at-a-glance security posture.
+// SampleInterval corrects for Cloudflare adaptive sampling — each record
+// may represent N actual events during high-volume periods (attacks, etc.).
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize
+    RawRecords     = count(),
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    UniqueCountries = dcount(ClientCountry),
+    UniqueRules     = dcount(RuleId)
+    by bin(TimeGenerated, 1h), Action
+| order by TimeGenerated desc, EstimatedEvents desc
+| render timechart with (title='Firewall Events by Action (Estimated, 24h)', ysplit=panels)

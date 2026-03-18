@@ -1,0 +1,21 @@
+// ============================================================================
+// Targeted Endpoints / Path Abuse — CloudflareFirewall_CL
+// ============================================================================
+// Reveals which URL paths are being hit hardest by firewall events. Useful
+// for identifying brute-force login attempts, API abuse, path traversal, etc.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    UniqueCountries = dcount(ClientCountry),
+    Actions         = make_set(Action, 10),
+    Methods         = make_set(RequestMethod, 10),
+    Sources         = make_set(Source, 10),
+    StatusCodes     = make_set(EdgeResponseStatus, 10)
+    by RequestPath, RequestHost
+| order by EstimatedEvents desc
+| take 50

@@ -1,0 +1,41 @@
+// ============================================================================
+// ALERT: Distributed Attack (IP Diversity Spike) — CloudflareFirewall_CL
+// ============================================================================
+// Fires when the number of unique blocked IPs in 15 minutes exceeds 3x
+// the historical average. Indicates a distributed attack — many IPs
+// each hitting lightly to evade per-IP rate limits.
+//
+// Schedule: Run every 5 minutes, lookback 15 minutes
+// Severity: High
+// ============================================================================
+
+let evaluation_window = 15m;
+let baseline_days = 7d;
+let spike_multiplier = 3.0;
+let current_unique_ips = toscalar(
+    CloudflareFirewall_CL
+    | where TimeGenerated > ago(evaluation_window)
+    | where Action in ("block", "managed_challenge", "challenge")
+    | summarize dcount(ClientIP)
+);
+let baseline_unique_ips = toscalar(
+    CloudflareFirewall_CL
+    | where TimeGenerated between (ago(baseline_days) .. ago(evaluation_window))
+    | where Action in ("block", "managed_challenge", "challenge")
+    | summarize avg_ips = toreal(dcount(ClientIP)) / (baseline_days / evaluation_window)
+);
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where Action in ("block", "managed_challenge", "challenge")
+| summarize
+    UniqueIPs       = dcount(ClientIP),
+    UniqueCountries = dcount(ClientCountry),
+    UniqueASNs      = dcount(ClientASNDescription),
+    EstimatedEvents = sum(SampleInterval),
+    TopCountries    = make_set(ClientCountry, 10),
+    TopASNs         = make_set(ClientASNDescription, 10),
+    TopPaths        = make_set(RequestPath, 10)
+| extend
+    BaselineAvgIPs  = round(toreal(baseline_unique_ips), 0),
+    SpikeMultiplier = round(toreal(current_unique_ips) / max_of(toreal(baseline_unique_ips), 1.0), 2)
+| where UniqueIPs > baseline_unique_ips * spike_multiplier

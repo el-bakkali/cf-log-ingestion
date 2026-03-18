@@ -1,0 +1,35 @@
+// ============================================================================
+// ML: Country-Level Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Detects when traffic from specific countries anomalously spikes.
+// Focused on the top N most active countries to keep cardinality manageable.
+// Useful for detecting geo-targeted attack campaigns.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+let topN = 10;
+// Identify the top N countries by volume first
+let topCountries = CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| summarize Total = sum(SampleInterval) by ClientCountry
+| top topN by Total
+| project ClientCountry;
+// Now run anomaly detection on those countries
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| where ClientCountry in (topCountries)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+    by ClientCountry
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Top Country Blocked Traffic - Anomaly Detection (14d)',
+        ysplit=panels
+    )

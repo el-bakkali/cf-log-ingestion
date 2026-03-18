@@ -1,0 +1,23 @@
+// ============================================================================
+// ALERT: Rate Limit Events Spike — CloudflareFirewall_CL
+// ============================================================================
+// Fires when rate limit source events spike. A sudden burst of rate
+// limiting often means a single actor or botnet is hammering an endpoint.
+//
+// Schedule: Run every 5 minutes, lookback 15 minutes
+// Severity: Medium
+// ============================================================================
+
+let evaluation_window = 15m;
+let event_threshold = 50;  // Minimum events to trigger
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where Source == "ratelimit"
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    TopIPs          = make_set(ClientIP, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopRules        = make_set(RuleDescription, 5),
+    TopCountries    = make_set(ClientCountry, 10)
+| where EstimatedEvents >= event_threshold

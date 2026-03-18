@@ -1,0 +1,25 @@
+// ============================================================================
+// HUNT: Referer-Based Attack Patterns — CloudflareFirewall_CL
+// ============================================================================
+// Analyzes referer hosts in blocked traffic. Malicious traffic often has:
+// no referer (direct scans), fake/spoofed referers, or referers from
+// known attacker infrastructure.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| extend RefererCategory = case(
+    isempty(RefererHost), "No Referer (Direct)",
+    RefererHost has_any ("google", "bing", "yahoo", "duckduckgo", "baidu"), "Search Engine",
+    RefererHost == RequestHost, "Self-Referral",
+    "External"
+)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    TopPaths        = make_set(RequestPath, 10)
+    by RefererCategory, RefererHost
+| order by EstimatedEvents desc
+| take 30

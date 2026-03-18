@@ -1,0 +1,38 @@
+// ============================================================================
+// HUNT: ML Week-over-Week Comparison — CloudflareFirewall_CL
+// ============================================================================
+// Compares this week's firewall events to last week's, hour by hour.
+// Uses series math to compute percentage change and highlights hours
+// where the week-over-week change exceeds a threshold.
+//
+// Positive change = more attacks this week than last week.
+// ============================================================================
+
+let this_week_start = startofweek(now());
+let last_week_start = startofweek(now()) - 7d;
+let grain = 1h;
+let change_threshold = 50.0;  // Alert on 50%+ change
+let this_week = CloudflareFirewall_CL
+| where TimeGenerated >= this_week_start
+| summarize ThisWeek = sum(SampleInterval) by bin(TimeGenerated, grain)
+| extend HourSlot = datetime_diff('hour', TimeGenerated, this_week_start);
+let last_week = CloudflareFirewall_CL
+| where TimeGenerated between (last_week_start .. this_week_start)
+| summarize LastWeek = sum(SampleInterval) by bin(TimeGenerated, grain)
+| extend HourSlot = datetime_diff('hour', TimeGenerated, last_week_start);
+this_week
+| join kind=leftouter last_week on HourSlot
+| extend
+    PercentChange = iff(LastWeek > 0,
+        round(100.0 * (toreal(ThisWeek) - toreal(LastWeek)) / toreal(LastWeek), 1),
+        100.0
+    ),
+    AbsoluteDelta = ThisWeek - LastWeek
+| project
+    TimeGenerated,
+    ThisWeek,
+    LastWeek,
+    AbsoluteDelta,
+    PercentChange,
+    SignificantChange = iff(abs(PercentChange) >= change_threshold, "YES", "no")
+| order by TimeGenerated asc

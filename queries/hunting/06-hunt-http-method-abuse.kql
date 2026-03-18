@@ -1,0 +1,23 @@
+// ============================================================================
+// HUNT: HTTP Method Abuse — CloudflareFirewall_CL
+// ============================================================================
+// Surfaces unusual HTTP methods (PUT, DELETE, PATCH, OPTIONS, TRACE)
+// that may indicate API exploitation, WebDAV attacks, or misconfigured
+// security policies that should be blocking non-standard methods.
+// ============================================================================
+
+let lookback = 24h;
+let normal_methods = dynamic(["GET", "POST", "HEAD"]);
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where RequestMethod !in (normal_methods) and isnotempty(RequestMethod)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    TopIPs          = make_set(ClientIP, 10),
+    Actions         = make_set(Action, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopHosts        = make_set(RequestHost, 5),
+    StatusCodes     = make_set(EdgeResponseStatus, 10)
+    by RequestMethod
+| order by EstimatedEvents desc

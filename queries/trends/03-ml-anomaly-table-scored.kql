@@ -1,0 +1,47 @@
+// ============================================================================
+// ML: Anomaly Table with Scores — CloudflareFirewall_CL
+// ============================================================================
+// Expands the anomaly series into individual rows with scores so you can
+// see EXACTLY which hours had anomalies and how severe they were.
+// Useful for incident response to identify when attacks started and ended.
+//
+// AnomalyScore magnitude:
+//   1.5–3.0  = mild anomaly (investigate)
+//   3.0–5.0  = significant anomaly (likely attack or outage)
+//   >5.0     = extreme anomaly (active incident)
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 1.5;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| mv-expand
+    TimeGenerated   to typeof(datetime),
+    EstimatedEvents to typeof(double),
+    AnomalyFlag     to typeof(double),
+    AnomalyScore    to typeof(double),
+    ExpectedEvents  to typeof(double)
+| where AnomalyFlag != 0
+| extend
+    Direction = iff(AnomalyFlag > 0, "Spike", "Dip"),
+    Severity  = case(
+        abs(AnomalyScore) >= 5.0, "Extreme",
+        abs(AnomalyScore) >= 3.0, "Significant",
+        "Mild"
+    ),
+    Deviation = round(EstimatedEvents - ExpectedEvents, 0)
+| project
+    TimeGenerated,
+    EstimatedEvents,
+    ExpectedEvents,
+    Deviation,
+    AnomalyScore = round(AnomalyScore, 2),
+    Direction,
+    Severity
+| order by abs(AnomalyScore) desc

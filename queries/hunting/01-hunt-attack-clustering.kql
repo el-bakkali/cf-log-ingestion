@@ -1,0 +1,28 @@
+// ============================================================================
+// HUNT: Attack Campaign Clustering — CloudflareFirewall_CL
+// ============================================================================
+// Uses autocluster() to automatically find statistically significant
+// patterns in blocked traffic. The plugin groups events by shared
+// attributes (country, ASN, path, rule, etc.) and surfaces clusters
+// that are over-represented — revealing coordinated attack campaigns
+// that share common fingerprints.
+//
+// Use case: "Show me the distinct attack campaigns in the last 24 hours"
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| project
+    ClientCountry,
+    ClientASNDescription,
+    ClientIPClass,
+    RequestPath,
+    RequestMethod,
+    RequestHost,
+    Source,
+    RuleDescription,
+    UserAgent,
+    EdgeResponseStatus
+| evaluate autocluster()

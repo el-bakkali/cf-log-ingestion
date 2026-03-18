@@ -1,0 +1,22 @@
+// ============================================================================
+// Suspicious Non-Clean IPs — CloudflareFirewall_CL
+// ============================================================================
+// Surfaces IPs that Cloudflare classifies as non-clean (badHost, tor,
+// searchEngine spoofing, scan, monitoringService, noRecord).
+// These deserve extra scrutiny regardless of the firewall action taken.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where ClientIPClass != "clean" and isnotempty(ClientIPClass)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    Actions         = make_set(Action, 10),
+    Paths           = make_set(RequestPath, 10),
+    Hosts           = make_set(RequestHost, 5),
+    ASNs            = make_set(ClientASNDescription, 5),
+    UserAgents      = make_set(UserAgent, 5)
+    by ClientIP, ClientIPClass, ClientCountry
+| order by EstimatedEvents desc
+| take 100

@@ -1,0 +1,27 @@
+// ============================================================================
+// ALERT: Tor / BadHost / Suspicious IP Class Activity — CloudflareFirewall_CL
+// ============================================================================
+// Fires when non-clean IP classes (tor, badHost, scan) generate events
+// that were NOT blocked — meaning suspicious traffic got through.
+//
+// Schedule: Run every 15 minutes, lookback 15 minutes
+// Severity: High
+// ============================================================================
+
+let evaluation_window = 15m;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where ClientIPClass in ("badHost", "tor", "scan")
+| where Action !in ("block", "challenge", "managed_challenge", "js_challenge")
+| summarize
+    EstimatedEvents  = sum(SampleInterval),
+    Actions          = make_set(Action, 10),
+    UniqueIPs        = dcount(ClientIP),
+    TopIPs           = make_set(ClientIP, 10),
+    TopPaths         = make_set(RequestPath, 10),
+    TopHosts         = make_set(RequestHost, 5),
+    TopUserAgents    = make_set(UserAgent, 5),
+    TopCountries     = make_set(ClientCountry, 10)
+    by ClientIPClass
+| where EstimatedEvents > 0
+| order by EstimatedEvents desc

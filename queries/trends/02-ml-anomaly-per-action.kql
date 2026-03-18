@@ -1,0 +1,27 @@
+// ============================================================================
+// ML: Anomaly Detection Per Action Type — CloudflareFirewall_CL
+// ============================================================================
+// Runs series_decompose_anomalies() independently for each firewall action
+// (block, challenge, managed_challenge, etc.) to detect when any single
+// action type spikes or dips abnormally — even if total volume is stable.
+//
+// This catches scenarios like: blocks triple while challenges drop to zero
+// (rule misconfiguration), or managed_challenge suddenly dominates (new attack).
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+    by Action
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Anomaly Detection per Action Type (14d)',
+        ysplit=panels
+    )

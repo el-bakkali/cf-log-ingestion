@@ -1,0 +1,24 @@
+// ============================================================================
+// HUNT: Blocked Traffic That Slipped Through — CloudflareFirewall_CL
+// ============================================================================
+// Shows traffic that triggered firewall rules but was NOT blocked
+// (action = log, skip, or similar). This traffic was flagged as
+// suspicious but allowed through — worth reviewing whether rules
+// should be tightened from "log" to "block".
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("log", "skip") or Action !in ("block", "challenge", "managed_challenge", "js_challenge", "connection_close", "force_connection_close")
+| where isnotempty(RuleDescription)
+| summarize
+    EstimatedEvents  = sum(SampleInterval),
+    UniqueIPs        = dcount(ClientIP),
+    UniqueCountries  = dcount(ClientCountry),
+    TopIPs           = make_set(ClientIP, 10),
+    TopCountries     = make_set(ClientCountry, 10),
+    TopPaths         = make_set(RequestPath, 10),
+    IPClasses        = make_set(ClientIPClass, 5)
+    by RuleId, RuleDescription, Source, Action
+| order by EstimatedEvents desc

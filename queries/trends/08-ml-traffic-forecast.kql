@@ -1,0 +1,21 @@
+// ============================================================================
+// ML: Traffic Forecasting (Next 24h) — CloudflareFirewall_CL
+// ============================================================================
+// Uses series_decompose_forecast() to predict the next 24 hours of
+// firewall event volume based on historical patterns (seasonal + trend).
+//
+// Helps capacity planning and sets expectations — if actual traffic
+// significantly exceeds the forecast, something abnormal is happening.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let horizon = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() + horizon step grain
+| extend Forecast = series_decompose_forecast(EstimatedEvents, toint(horizon / grain))
+| render timechart
+    with (title='Firewall Event Volume — 14d History + 24h Forecast')

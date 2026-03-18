@@ -1,0 +1,13 @@
+// ============================================================================
+// Action Distribution Over Time — CloudflareFirewall_CL
+// ============================================================================
+// Stacked area chart of firewall actions over time. Quick visual indicator
+// of when block/challenge volumes spike versus baseline.
+// ============================================================================
+
+let lookback = 7d;
+let grain = 1h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize EstimatedEvents = sum(SampleInterval) by bin(TimeGenerated, grain), Action
+| render areachart with (title='Firewall Action Distribution (7d)', ysplit=none)

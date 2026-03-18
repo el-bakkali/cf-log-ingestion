@@ -1,0 +1,30 @@
+// ============================================================================
+// ML: Block Rate Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Tracks the RATIO of blocks to total events over time, then detects
+// anomalies in that ratio. This catches attacks that are proportionally
+// different even if raw volume stays the same.
+//
+// Example: if block rate jumps from 15% to 60%, that's a pattern shift
+// the raw volume anomaly might miss if total traffic also dropped.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize
+    TotalEvents  = sum(SampleInterval),
+    BlockEvents  = sumif(SampleInterval, Action == "block")
+    by bin(TimeGenerated, grain)
+| extend BlockRate = iff(TotalEvents > 0, round(100.0 * BlockEvents / TotalEvents, 2), 0.0)
+| make-series BlockRateSeries = avg(BlockRate) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (AnomalyFlag, AnomalyScore, ExpectedRate) =
+    series_decompose_anomalies(BlockRateSeries, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Block Rate (%) Anomaly Detection (14d)'
+    )

@@ -1,0 +1,30 @@
+// ============================================================================
+// ALERT: New Country Blocked — CloudflareFirewall_CL
+// ============================================================================
+// Fires when blocks appear from a country that has NOT generated any
+// block events in the previous 7 days. Useful for detecting new
+// attack origins or geo-expansion of existing campaigns.
+//
+// Schedule: Run every 15 minutes, lookback 15 minutes
+// Severity: Medium
+// ============================================================================
+
+let evaluation_window = 15m;
+let baseline_days = 7d;
+let known_countries = CloudflareFirewall_CL
+| where TimeGenerated between (ago(baseline_days) .. ago(evaluation_window))
+| where Action == "block"
+| distinct ClientCountry;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where Action == "block"
+| where ClientCountry !in (known_countries)
+| summarize
+    EstimatedBlocks = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    TopIPs          = make_set(ClientIP, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopASNs         = make_set(ClientASNDescription, 5),
+    TopRules        = make_set(RuleDescription, 5)
+    by ClientCountry
+| order by EstimatedBlocks desc

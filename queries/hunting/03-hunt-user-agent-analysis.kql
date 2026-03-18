@@ -1,0 +1,27 @@
+// ============================================================================
+// HUNT: User-Agent Anomalies — CloudflareFirewall_CL
+// ============================================================================
+// Surfaces the most common User-Agent strings in blocked traffic.
+// Malicious bots often use: empty UAs, outdated browsers, Python/Go/curl
+// libraries, or known scanner signatures.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| extend UA_Category = case(
+    isempty(UserAgent) or UserAgent == "-", "Empty/Missing",
+    UserAgent has_any ("python", "go-http", "curl", "wget", "httpie", "axios", "node-fetch"), "Scripting Library",
+    UserAgent has_any ("scan", "nikto", "sqlmap", "nmap", "masscan", "zgrab", "nuclei"), "Known Scanner",
+    UserAgent has_any ("bot", "crawler", "spider"), "Bot/Crawler",
+    UserAgent has_any ("Chrome", "Firefox", "Safari", "Edge") and not(UserAgent has_any ("bot", "crawler")), "Browser-Like",
+    "Other"
+)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    TopIPs          = make_set(ClientIP, 5),
+    Sample          = take_any(UserAgent)
+    by UA_Category
+| order by EstimatedEvents desc

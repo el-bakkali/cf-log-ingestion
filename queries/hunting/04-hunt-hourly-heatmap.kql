@@ -1,0 +1,31 @@
+// ============================================================================
+// HUNT: Hour-of-Day Heatmap — CloudflareFirewall_CL
+// ============================================================================
+// Shows when attacks concentrate by hour-of-day and day-of-week.
+// Reveals attacker time zones, automated schedules, business-hour
+// targeting patterns, and weekend vs weekday differences.
+// ============================================================================
+
+let lookback = 14d;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| extend
+    HourOfDay  = hourofday(TimeGenerated),
+    DayOfWeek  = dayofweek(TimeGenerated) / 1d  // 0=Sun, 1=Mon, ...
+| extend DayName = case(
+    DayOfWeek == 0, "Sun",
+    DayOfWeek == 1, "Mon",
+    DayOfWeek == 2, "Tue",
+    DayOfWeek == 3, "Wed",
+    DayOfWeek == 4, "Thu",
+    DayOfWeek == 5, "Fri",
+    "Sat"
+)
+| summarize EstimatedEvents = sum(SampleInterval) by HourOfDay, DayName
+| order by DayName asc, HourOfDay asc
+| render columnchart with (
+    title='Attack Volume Heatmap: Hour of Day × Day of Week',
+    series=DayName,
+    kind=stacked
+)

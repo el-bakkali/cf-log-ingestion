@@ -1,0 +1,25 @@
+// ============================================================================
+// ML: Per-Zone Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Runs anomaly detection independently per Cloudflare zone. Catches
+// zone-specific attacks that would be hidden in aggregate traffic.
+// Example: a DDoS on zone-A while zone-B is quiet — the aggregate
+// might look normal, but per-zone analysis catches it.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+    by Zone
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Per-Zone Firewall Event Anomalies (14d)',
+        ysplit=panels
+    )

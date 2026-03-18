@@ -1,0 +1,19 @@
+// ============================================================================
+// Events by Source Type — CloudflareFirewall_CL
+// ============================================================================
+// Breakdown of which Cloudflare security products are generating events.
+// Source values: firewallCustom, firewallManaged, ratelimit, botFight,
+//               botManagement, apiShield, dlp, sanitycheck, etc.
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    UniqueRules     = dcount(RuleId),
+    Actions         = make_set(Action, 10)
+    by Source
+| order by EstimatedEvents desc
+| render piechart with (title='Firewall Events by Security Product')

@@ -1,0 +1,24 @@
+// ============================================================================
+// ML: Unique Attacker IP Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Detects anomalous spikes in the number of DISTINCT attacking IPs per hour.
+// A sudden jump in unique IPs hitting firewall rules (even at low volume
+// per-IP) indicates a distributed attack or coordinated scan campaign.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge", "js_challenge")
+| summarize UniqueIPs = dcount(ClientIP) by bin(TimeGenerated, grain)
+| make-series UniqueIPSeries = avg(UniqueIPs) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (AnomalyFlag, AnomalyScore, ExpectedIPs) =
+    series_decompose_anomalies(UniqueIPSeries, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Unique Attacker IP Count - Anomaly Detection (14d)'
+    )

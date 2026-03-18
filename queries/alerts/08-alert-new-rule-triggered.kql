@@ -1,0 +1,30 @@
+// ============================================================================
+// ALERT: New Rule Triggered — CloudflareFirewall_CL
+// ============================================================================
+// Fires when a RuleId is seen that hasn't appeared in the last 7 days.
+// Catches newly created rules firing for the first time, or dormant
+// rules reactivating — both warrant analyst attention.
+//
+// Schedule: Run every 15 minutes, lookback 15 minutes
+// Severity: Informational
+// ============================================================================
+
+let evaluation_window = 15m;
+let baseline_days = 7d;
+let known_rules = CloudflareFirewall_CL
+| where TimeGenerated between (ago(baseline_days) .. ago(evaluation_window))
+| where isnotempty(RuleId)
+| distinct RuleId;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where isnotempty(RuleId)
+| where RuleId !in (known_rules)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    Actions         = make_set(Action, 10),
+    TopIPs          = make_set(ClientIP, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopCountries    = make_set(ClientCountry, 10)
+    by RuleId, RuleDescription, Source
+| order by EstimatedEvents desc

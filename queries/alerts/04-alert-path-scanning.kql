@@ -1,0 +1,27 @@
+// ============================================================================
+// ALERT: Brute Force / Path Scanning — CloudflareFirewall_CL
+// ============================================================================
+// Fires when a single IP hits more than N distinct paths in a short window.
+// Classic indicator of vulnerability scanning, directory traversal, or
+// credential stuffing across multiple login endpoints.
+//
+// Schedule: Run every 5 minutes, lookback 15 minutes
+// Severity: Medium-High
+// ============================================================================
+
+let evaluation_window = 15m;
+let path_threshold = 20;  // Tune: lower = more sensitive
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| summarize
+    DistinctPaths   = dcount(RequestPath),
+    EstimatedEvents = sum(SampleInterval),
+    Actions         = make_set(Action, 10),
+    Paths           = make_set(RequestPath, 30),
+    Methods         = make_set(RequestMethod, 5),
+    Hosts           = make_set(RequestHost, 5),
+    Sources         = make_set(Source, 10),
+    UserAgents      = make_set(UserAgent, 3)
+    by ClientIP, ClientCountry, ClientASNDescription
+| where DistinctPaths >= path_threshold
+| order by DistinctPaths desc

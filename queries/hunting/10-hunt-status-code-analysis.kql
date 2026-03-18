@@ -1,0 +1,25 @@
+// ============================================================================
+// HUNT: Edge Response Status Code Analysis — CloudflareFirewall_CL
+// ============================================================================
+// Distribution of HTTP status codes in firewall events. Unusual patterns
+// such as 403s (blocks working), 200s in blocked traffic (bypass), 429s
+// (rate limiting active), and 5xx in firewall events (backend errors).
+// ============================================================================
+
+let lookback = 24h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| summarize
+    EstimatedEvents = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    Actions         = make_set(Action, 10),
+    Sources         = make_set(Source, 10)
+    by EdgeResponseStatus
+| extend StatusCategory = case(
+    EdgeResponseStatus between (200 .. 299), "2xx Success",
+    EdgeResponseStatus between (300 .. 399), "3xx Redirect",
+    EdgeResponseStatus between (400 .. 499), "4xx Client Error",
+    EdgeResponseStatus between (500 .. 599), "5xx Server Error",
+    "Other"
+)
+| order by EstimatedEvents desc

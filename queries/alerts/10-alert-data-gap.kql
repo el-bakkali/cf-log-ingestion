@@ -1,0 +1,21 @@
+// ============================================================================
+// ALERT: Firewall Events Stopped (Data Gap) — CloudflareFirewall_CL
+// ============================================================================
+// Fires when NO firewall events are ingested for a configurable period.
+// Could indicate: Azure Function failure, Cloudflare API issue, token
+// expiry, zone configuration change, or network problem.
+//
+// Schedule: Run every 5 minutes, lookback 10 minutes
+// Severity: Critical (operational)
+// ============================================================================
+
+let silence_threshold = 10m;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(1h)
+| summarize LastEvent = max(TimeGenerated)
+| extend MinutesSinceLastEvent = datetime_diff('minute', now(), LastEvent)
+| where MinutesSinceLastEvent >= silence_threshold / 1m
+| project
+    LastEvent,
+    MinutesSinceLastEvent,
+    AlertMessage = strcat("No Cloudflare firewall events received for ", tostring(MinutesSinceLastEvent), " minutes")

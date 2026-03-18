@@ -1,0 +1,27 @@
+// ============================================================================
+// HUNT: Repeat Offenders — CloudflareFirewall_CL
+// ============================================================================
+// Identifies IPs that appear across multiple days, persisting in attacks.
+// High DistinctDays = persistent threat actor (not drive-by scanning).
+// Consider adding these to permanent block lists.
+// ============================================================================
+
+let lookback = 7d;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where Action in ("block", "managed_challenge", "challenge")
+| summarize
+    DistinctDays     = dcount(bin(TimeGenerated, 1d)),
+    EstimatedEvents  = sum(SampleInterval),
+    FirstSeen        = min(TimeGenerated),
+    LastSeen         = max(TimeGenerated),
+    Zones            = make_set(Zone, 10),
+    Countries        = make_set(ClientCountry, 3),
+    TopPaths         = make_set(RequestPath, 10),
+    TopRules         = make_set(RuleDescription, 5),
+    Sources          = make_set(Source, 10)
+    by ClientIP, ClientASNDescription
+| where DistinctDays >= 3
+| extend PersistenceDays = datetime_diff('day', LastSeen, FirstSeen)
+| order by DistinctDays desc, EstimatedEvents desc
+| take 50

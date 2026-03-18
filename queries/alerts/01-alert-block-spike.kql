@@ -1,0 +1,44 @@
+// ============================================================================
+// ALERT: High-Volume Block Spike — CloudflareFirewall_CL
+// ============================================================================
+// Custom log alert: Fires when the number of blocked events in the last
+// 15 minutes exceeds 3x the average for the same 15-minute window over
+// the past 7 days. Adaptive to your baseline — no hardcoded thresholds.
+//
+// Schedule: Run every 5 minutes, lookback 15 minutes
+// Severity: High
+// ============================================================================
+
+let evaluation_window = 15m;
+let baseline_days = 7d;
+let spike_multiplier = 3.0;
+// Current window
+let current_blocks = toscalar(
+    CloudflareFirewall_CL
+    | where TimeGenerated > ago(evaluation_window)
+    | where Action == "block"
+    | summarize sum(SampleInterval)
+);
+// Historical baseline for same time-of-day window
+let baseline_avg = toscalar(
+    CloudflareFirewall_CL
+    | where TimeGenerated between (ago(baseline_days) .. ago(evaluation_window))
+    | where Action == "block"
+    | summarize AvgPerWindow = sum(SampleInterval) / (baseline_days / evaluation_window)
+);
+// Fire if current exceeds baseline * multiplier
+CloudflareFirewall_CL
+| where TimeGenerated > ago(evaluation_window)
+| where Action == "block"
+| summarize
+    CurrentBlocks   = sum(SampleInterval),
+    UniqueIPs       = dcount(ClientIP),
+    UniqueCountries = dcount(ClientCountry),
+    TopIPs          = make_set(ClientIP, 10),
+    TopCountries    = make_set(ClientCountry, 10),
+    TopPaths        = make_set(RequestPath, 10),
+    TopRules        = make_set(RuleDescription, 5)
+| extend
+    BaselineAvg     = round(toreal(baseline_avg), 0),
+    SpikeMultiplier = round(toreal(current_blocks) / max_of(toreal(baseline_avg), 1.0), 2)
+| where CurrentBlocks > baseline_avg * spike_multiplier

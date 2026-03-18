@@ -1,0 +1,22 @@
+// ============================================================================
+// WAF Rule Effectiveness — CloudflareFirewall_CL
+// ============================================================================
+// Shows which WAF/firewall rules are triggering most, with attacker diversity
+// metrics to gauge whether rules catch broad threats vs single-source noise.
+// ============================================================================
+
+let lookback = 7d;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where isnotempty(RuleDescription)
+| summarize
+    EstimatedHits    = sum(SampleInterval),
+    UniqueIPs        = dcount(ClientIP),
+    UniqueCountries  = dcount(ClientCountry),
+    UniqueASNs       = dcount(ClientASNDescription),
+    Actions          = make_set(Action, 10),
+    TopPaths         = make_set(RequestPath, 10),
+    TopMethods       = make_set(RequestMethod, 5)
+    by RuleId, RuleDescription, Source
+| extend AttackerDiversity = iff(UniqueIPs > 10 and UniqueCountries > 3, "Broad", "Narrow")
+| order by EstimatedHits desc

@@ -1,0 +1,36 @@
+// ============================================================================
+// ML: Anomaly Root Cause Analysis — CloudflareFirewall_CL
+// ============================================================================
+// When you detect an anomalous hour, this query uses diffpatterns() to
+// compare the anomalous period against normal periods and surface the
+// SPECIFIC attributes (IPs, countries, ASNs, paths, rules) that differ.
+//
+// USAGE: After finding an anomaly in query 03, set anomaly_start/end to
+// the anomalous time window. diffpatterns() will show what's different.
+// ============================================================================
+
+// --- Set these to the anomalous window you detected ---
+let anomaly_start = datetime(2026-03-17 14:00);
+let anomaly_end   = datetime(2026-03-17 16:00);
+let baseline_days = 7d;
+// ---
+
+let anomaly_data = CloudflareFirewall_CL
+| where TimeGenerated between (anomaly_start .. anomaly_end)
+| extend Period = "Anomaly";
+let baseline_data = CloudflareFirewall_CL
+| where TimeGenerated between (ago(baseline_days) .. anomaly_start)
+| extend Period = "Baseline";
+union anomaly_data, baseline_data
+| project
+    Period,
+    Action,
+    Source,
+    ClientCountry,
+    ClientASNDescription,
+    ClientIPClass,
+    RequestPath,
+    RequestMethod,
+    RequestHost,
+    EdgeResponseStatus
+| evaluate diffpatterns(Period, "Baseline", "Anomaly")

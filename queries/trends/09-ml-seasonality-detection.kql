@@ -1,0 +1,28 @@
+// ============================================================================
+// ML: Seasonality Detection — CloudflareFirewall_CL
+// ============================================================================
+// Uses series_periods_detect() to automatically find recurring patterns
+// in firewall event volume (e.g., daily cycles, weekly patterns).
+// Understanding seasonality helps you set better alert thresholds —
+// don't alert on a "spike" that happens every Monday at 9am.
+// ============================================================================
+
+let lookback = 21d;
+let grain = 1h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (periods, scores) = series_periods_detect(EstimatedEvents, 4.0, 168.0, 2)
+| mv-expand periods to typeof(double), scores to typeof(double)
+| project
+    DetectedPeriod_Hours = round(periods, 1),
+    DetectedPeriod_Label = case(
+        abs(periods - 24.0) < 2, "~Daily",
+        abs(periods - 168.0) < 10, "~Weekly",
+        abs(periods - 12.0) < 1, "~12-Hour",
+        strcat("~", tostring(round(periods, 0)), "h cycle")
+    ),
+    ConfidenceScore = round(scores, 4)
+| order by ConfidenceScore desc

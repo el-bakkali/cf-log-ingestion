@@ -1,0 +1,27 @@
+// ============================================================================
+// ML: Per-Source Anomaly Detection — CloudflareFirewall_CL
+// ============================================================================
+// Detects anomalies per Cloudflare security product (firewallCustom,
+// firewallManaged, ratelimit, botFight, etc.). Catches scenarios like:
+// - Rate limiting suddenly spikes (possible DDoS or API abuse)
+// - Bot fight events drop to zero (feature disabled accidentally?)
+// - WAF managed rules suddenly trigger 10x more (new vulnerability?)
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+let threshold = 2.0;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| where isnotempty(Source)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+    by Source
+| extend (AnomalyFlag, AnomalyScore, ExpectedEvents) =
+    series_decompose_anomalies(EstimatedEvents, threshold, -1, 'linefit')
+| render timechart
+    with (
+        title='Per-Source Security Product Anomalies (14d)',
+        ysplit=panels
+    )

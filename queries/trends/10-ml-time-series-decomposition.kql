@@ -1,0 +1,27 @@
+// ============================================================================
+// ML: Time Series Decomposition Visualization — CloudflareFirewall_CL
+// ============================================================================
+// Decomposes firewall traffic into its core components:
+//   - Seasonal: recurring daily/weekly patterns
+//   - Trend: long-term increasing or decreasing direction
+//   - Residual: leftover noise (anomalies live here)
+//   - Baseline: seasonal + trend (what "normal" looks like)
+//
+// This is the foundation that all anomaly detection builds on.
+// Use the panel view to understand your traffic dynamics.
+// ============================================================================
+
+let lookback = 14d;
+let grain = 1h;
+CloudflareFirewall_CL
+| where TimeGenerated > ago(lookback)
+| make-series EstimatedEvents = sum(SampleInterval) default=0
+    on TimeGenerated
+    from ago(lookback) to now() step grain
+| extend (Baseline, Seasonal, Trend, Residual) =
+    series_decompose(EstimatedEvents, -1, 'linefit')
+| render timechart
+    with (
+        title='Time Series Decomposition — Firewall Traffic (14d)',
+        ysplit=panels
+    )
