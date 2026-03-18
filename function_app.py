@@ -143,10 +143,13 @@ def cf_log_ingestion(timer: func.TimerRequest) -> None:
     endpoint = os.environ["DCR_ENDPOINT"]
     zones = json.loads(os.environ["CF_ZONES"])
 
-    # 3-minute window with 2-minute overlap to catch Cloudflare ingestion delay
+    # 1-minute non-overlapping window with 1-minute delay.
+    # Each run queries [now-2min, now-1min) so Cloudflare has time to
+    # make events available, consecutive runs never overlap, and no
+    # deduplication is needed.
     now = datetime.datetime.now(datetime.timezone.utc)
-    time_end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    time_start = (now - datetime.timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    time_end = (now - datetime.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    time_start = (now - datetime.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     logging.info("Querying Cloudflare: %s to %s", time_start, time_end)
 
@@ -161,16 +164,5 @@ def cf_log_ingestion(timer: func.TimerRequest) -> None:
         logging.info("No events to ingest")
         return
 
-    # Deduplicate by RayID (handles the overlap between runs)
-    seen = set()
-    unique_events = []
-    for event in all_events:
-        ray_id = event["RayID"]
-        if ray_id and ray_id not in seen:
-            seen.add(ray_id)
-            unique_events.append(event)
-        elif not ray_id:
-            unique_events.append(event)
-
-    logging.info("Total unique events to ingest: %d", len(unique_events))
-    send_to_log_analytics(unique_events, dcr_id, stream_name, endpoint)
+    logging.info("Total events to ingest: %d", len(all_events))
+    send_to_log_analytics(all_events, dcr_id, stream_name, endpoint)
