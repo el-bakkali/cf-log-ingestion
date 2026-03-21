@@ -1,29 +1,34 @@
 # Cloudflare Log Ingestion to Azure Log Analytics
 
-Automated pipeline that ingests Cloudflare WAF firewall events into Azure Log Analytics using a Python Azure Function and the Log Ingestion API. Runs every minute, queries the Cloudflare GraphQL Analytics API, and writes to a custom table for alerting, threat hunting, and security monitoring.
+Automated pipeline that ingests Cloudflare firewall events and HTTP request logs into Azure Log Analytics using Python Azure Functions and the Logs Ingestion API. Two timer-triggered functions run every minute, querying the Cloudflare GraphQL Analytics API, and writing to separate custom tables for alerting, threat hunting, and security monitoring.
 
 ## Architecture
 
 ```
 Cloudflare GraphQL API
         |
-        | (every 1 minute)
+        | (every 1 minute, 2 parallel functions)
         v
-Azure Function (Python 3.11, Flex Consumption)
+Azure Function App (Python 3.11, Flex Consumption)
         |
-        | DefaultAzureCredential + Managed Identity
-        v
-Data Collection Rule (Direct ingestion, no DCE)
+        ├── cf_log_ingestion
+        |   | firewallEventsAdaptive
+        |   v
+        |   DCR: dcr-cf-firewall -> CloudflareFirewall_CL (23 columns)
         |
-        v
-Log Analytics: CloudflareFirewall_CL (23 columns)
+        └── cf_http_ingestion
+            | httpRequestsAdaptiveGroups
+            v
+            DCR: dcr-cf-http-requests -> CloudflareHTTPRequests_CL (23 columns)
 ```
 
-The function authenticates to Cloudflare using an API token stored in Azure Key Vault (referenced via `@Microsoft.KeyVault()` syntax). It authenticates to Azure using a system-assigned managed identity with the `Monitoring Metrics Publisher` role on the Data Collection Rule.
+Both functions authenticate to Cloudflare using an API token stored in Azure Key Vault (referenced via `@Microsoft.KeyVault()` syntax). They authenticate to Azure using a shared system-assigned managed identity with the `Monitoring Metrics Publisher` role on each Data Collection Rule.
 
-No Data Collection Endpoint (DCE) is required. DCRs with `kind: Direct` expose their own ingestion endpoint.
+No Data Collection Endpoints (DCEs) are required. DCRs with `kind: Direct` expose their own ingestion endpoints.
 
 ## What Gets Ingested
+
+### Firewall Events (`CloudflareFirewall_CL`)
 
 Each firewall event is mapped to a 23-column custom table:
 
@@ -52,6 +57,36 @@ Each firewall event is mapped to a 23-column custom table:
 | RulesetId | string | Ruleset ID containing the matched rule |
 | SampleInterval | int | Sampling interval (1 = every event captured) |
 | Kind | string | Event kind |
+
+### HTTP Requests (`CloudflareHTTPRequests_CL`)
+
+Each HTTP request group is mapped to a 23-column custom table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| TimeGenerated | datetime | Event timestamp from Cloudflare |
+| Zone | string | Cloudflare zone name |
+| RequestHost | string | HTTP host header |
+| RequestPath | string | HTTP request path |
+| RequestQuery | string | HTTP query string |
+| RequestMethod | string | HTTP method (GET, POST, etc.) |
+| HttpProtocol | string | HTTP protocol version |
+| RequestScheme | string | HTTP or HTTPS |
+| EdgeResponseStatus | int | Edge HTTP response status code |
+| OriginResponseStatus | int | Origin HTTP response status code |
+| CacheStatus | string | Cloudflare cache status (HIT, MISS, etc.) |
+| ClientIP | string | Client IP address |
+| ClientCountry | string | Client country name |
+| ClientASN | string | Client AS number |
+| ClientASNDescription | string | Client ASN organisation name |
+| ClientDeviceType | string | Device type (desktop, mobile, etc.) |
+| TLSVersion | string | TLS protocol version |
+| EdgeColo | string | Cloudflare edge colo code |
+| UserAgent | string | User agent string |
+| RefererHost | string | HTTP referer host |
+| ContentType | string | Response content type |
+| SampleInterval | int | Cloudflare sampling interval |
+| RequestCount | int | Number of requests in this group |
 
 ## Prerequisites
 
@@ -177,13 +212,15 @@ The script deploys via the Azure Monitor Workbooks REST API (`2023-06-01`). It r
 
 ## How It Works
 
-The function runs on a 1-minute timer trigger. Each execution:
+The function app contains two timer-triggered functions, both running on a 1-minute schedule. Each execution:
 
-1. Calculates a 3-minute lookback window (current time minus 3 minutes). The overlap between consecutive runs handles Cloudflare's slight ingestion delay.
-2. Queries the Cloudflare GraphQL Analytics API (`firewallEventsAdaptive` node) for each configured zone, requesting up to 10,000 events per zone.
+1. Calculates a non-overlapping 1-minute query window with a 1-minute delay (`[now-2min, now-1min)`). The delay gives Cloudflare time to make events available. Consecutive windows never overlap, so no deduplication is needed.
+2. Queries the Cloudflare GraphQL Analytics API for each configured zone, requesting up to 10,000 records per zone.
 3. Transforms the events from Cloudflare's field naming to the Log Analytics table schema.
-4. Deduplicates by Ray ID to prevent duplicate records from the overlapping time windows.
-5. Sends the batch to Log Analytics via the Logs Ingestion API using a Data Collection Rule.
+4. Sends the batch to Log Analytics via the Logs Ingestion API using the appropriate Data Collection Rule.
+
+`cf_log_ingestion` queries the `firewallEventsAdaptive` node and writes to `CloudflareFirewall_CL`.
+`cf_http_ingestion` queries `httpRequestsAdaptiveGroups` and writes to `CloudflareHTTPRequests_CL`.
 
 ### Cloudflare GraphQL Rate Limits
 
@@ -220,18 +257,20 @@ The deployment creates the following resources:
 |----------|------|---------|
 | Log Analytics Workspace | PerGB2018 (Analytics plan) | Log storage and KQL querying |
 | CloudflareFirewall_CL | Custom table (23 columns) | Firewall event data |
-| Data Collection Rule | Direct (no DCE) | Routes ingested data to the table |
+| CloudflareHTTPRequests_CL | Custom table (23 columns) | HTTP request log data |
+| DCR: dcr-cf-firewall | Direct (no DCE) | Routes firewall events to table |
+| DCR: dcr-cf-http-requests | Direct (no DCE) | Routes HTTP request logs to table |
 | Storage Account | Standard LRS | Function App backing storage |
 | Key Vault | Standard, RBAC auth | Stores the Cloudflare API token |
 | Application Insights | Workspace-based | Function App monitoring and diagnostics |
-| Function App | Flex Consumption, Python 3.11 | Runs the ingestion function |
+| Function App | Flex Consumption, Python 3.11 | Runs both ingestion functions |
 
 ### Security
 
 - The Cloudflare API token is stored in Key Vault and accessed via `@Microsoft.KeyVault()` references. It never appears in app settings or code.
 - The function authenticates to Azure using a system-assigned managed identity. No credentials are stored in code.
 - Key Vault has RBAC authorisation enabled with purge protection.
-- The managed identity has least-privilege access: `Monitoring Metrics Publisher` on the DCR only, and `Key Vault Secrets User` on the vault only.
+- The managed identity has least-privilege access: `Monitoring Metrics Publisher` on each DCR, and `Key Vault Secrets User` on the vault only.
 - The storage account enforces TLS 1.2.
 
 ## Cost
@@ -242,7 +281,7 @@ Under typical usage on a low-traffic site, this pipeline costs nothing:
 |-----------|-------------|:------------:|
 | Log Analytics (Analytics plan) | ~10 MB/month | Free (within 5 GB/month allowance) |
 | Application Insights | ~84 MB/month | Free (within 5 GB/month allowance) |
-| Function App (Flex Consumption) | ~1,440 executions/day | Free (within 100K/month allowance) |
+| Function App (Flex Consumption) | ~2,880 executions/day | Free (within 100K/month allowance) |
 | Key Vault | Minimal operations | Free tier |
 
 Daily caps are configured by default (1 GB for Log Analytics, 0.5 GB for App Insights) to prevent unexpected costs during traffic spikes. Even at 100x normal traffic, ingestion typically stays within free tier limits.
@@ -251,12 +290,12 @@ Daily caps are configured by default (1 GB for Log Analytics, 0.5 GB for App Ins
 
 ```
 cf-log-ingestion/
-├── function_app.py          # Azure Function (timer trigger, 1-min interval)
+├── function_app.py          # Two Azure Functions (cf_log_ingestion + cf_http_ingestion)
 ├── requirements.txt         # Python dependencies
 ├── host.json                # Functions host configuration
 ├── .gitignore
 ├── infra/
-│   ├── main.bicep           # Azure infrastructure (Bicep template)
+│   ├── main.bicep           # Azure infrastructure (workspace, 2 tables, 2 DCRs, KV, etc.)
 │   └── deploy.ps1           # One-step deployment script
 ├── queries/
 │   ├── dashboard/           # 10 operational monitoring queries

@@ -17,8 +17,11 @@ param cfZones string
 @description('Log Analytics workspace name.')
 param workspaceName string = 'law-cf-security'
 
-@description('Data Collection Rule name.')
+@description('Data Collection Rule name for firewall events.')
 param dcrName string = 'dcr-cf-firewall'
+
+@description('Data Collection Rule name for HTTP request logs.')
+param httpDcrName string = 'dcr-cf-http-requests'
 
 @description('Storage account name (must be globally unique, 3-24 chars, lowercase alphanumeric).')
 param storageName string
@@ -152,6 +155,104 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
 }
 
 // ============================================================================
+// Custom Table: CloudflareHTTPRequests_CL (23 columns)
+// ============================================================================
+
+resource httpTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'CloudflareHTTPRequests_CL'
+  properties: {
+    schema: {
+      name: 'CloudflareHTTPRequests_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'dateTime', description: 'Event timestamp from Cloudflare' }
+        { name: 'Zone', type: 'string', description: 'Cloudflare zone name' }
+        { name: 'RequestHost', type: 'string', description: 'HTTP host header' }
+        { name: 'RequestPath', type: 'string', description: 'HTTP request path' }
+        { name: 'RequestQuery', type: 'string', description: 'HTTP query string' }
+        { name: 'RequestMethod', type: 'string', description: 'HTTP method (GET, POST, etc.)' }
+        { name: 'HttpProtocol', type: 'string', description: 'HTTP protocol version' }
+        { name: 'RequestScheme', type: 'string', description: 'HTTP or HTTPS' }
+        { name: 'EdgeResponseStatus', type: 'int', description: 'Edge HTTP response status code' }
+        { name: 'OriginResponseStatus', type: 'int', description: 'Origin HTTP response status code' }
+        { name: 'CacheStatus', type: 'string', description: 'Cloudflare cache status (HIT, MISS, etc.)' }
+        { name: 'ClientIP', type: 'string', description: 'Client IP address' }
+        { name: 'ClientCountry', type: 'string', description: 'Client country name' }
+        { name: 'ClientASN', type: 'string', description: 'Client AS number' }
+        { name: 'ClientASNDescription', type: 'string', description: 'Client ASN organisation name' }
+        { name: 'ClientDeviceType', type: 'string', description: 'Device type (desktop, mobile, etc.)' }
+        { name: 'TLSVersion', type: 'string', description: 'TLS protocol version' }
+        { name: 'EdgeColo', type: 'string', description: 'Cloudflare edge colo code' }
+        { name: 'UserAgent', type: 'string', description: 'User agent string' }
+        { name: 'RefererHost', type: 'string', description: 'HTTP referer host' }
+        { name: 'ContentType', type: 'string', description: 'Response content type' }
+        { name: 'SampleInterval', type: 'int', description: 'Cloudflare sampling interval' }
+        { name: 'RequestCount', type: 'int', description: 'Number of requests in this group' }
+      ]
+    }
+    retentionInDays: 90
+  }
+}
+
+// ============================================================================
+// Data Collection Rule: HTTP Requests (Direct ingestion, no DCE required)
+// ============================================================================
+
+resource httpDcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
+  name: httpDcrName
+  location: location
+  kind: 'Direct'
+  properties: {
+    streamDeclarations: {
+      'Custom-CloudflareHTTPRequests_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'Zone', type: 'string' }
+          { name: 'RequestHost', type: 'string' }
+          { name: 'RequestPath', type: 'string' }
+          { name: 'RequestQuery', type: 'string' }
+          { name: 'RequestMethod', type: 'string' }
+          { name: 'HttpProtocol', type: 'string' }
+          { name: 'RequestScheme', type: 'string' }
+          { name: 'EdgeResponseStatus', type: 'int' }
+          { name: 'OriginResponseStatus', type: 'int' }
+          { name: 'CacheStatus', type: 'string' }
+          { name: 'ClientIP', type: 'string' }
+          { name: 'ClientCountry', type: 'string' }
+          { name: 'ClientASN', type: 'string' }
+          { name: 'ClientASNDescription', type: 'string' }
+          { name: 'ClientDeviceType', type: 'string' }
+          { name: 'TLSVersion', type: 'string' }
+          { name: 'EdgeColo', type: 'string' }
+          { name: 'UserAgent', type: 'string' }
+          { name: 'RefererHost', type: 'string' }
+          { name: 'ContentType', type: 'string' }
+          { name: 'SampleInterval', type: 'int' }
+          { name: 'RequestCount', type: 'int' }
+        ]
+      }
+    }
+    destinations: {
+      logAnalytics: [
+        {
+          workspaceResourceId: workspace.id
+          name: 'LogAnalyticsDest'
+        }
+      ]
+    }
+    dataFlows: [
+      {
+        streams: [ 'Custom-CloudflareHTTPRequests_CL' ]
+        destinations: [ 'LogAnalyticsDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-CloudflareHTTPRequests_CL'
+      }
+    ]
+  }
+  dependsOn: [ httpTable ]
+}
+
+// ============================================================================
 // Storage Account
 // ============================================================================
 
@@ -219,6 +320,9 @@ output workspaceCustomerId string = workspace.properties.customerId
 output dcrImmutableId string = dcr.properties.immutableId
 output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
 output dcrResourceId string = dcr.id
+output httpDcrImmutableId string = httpDcr.properties.immutableId
+output httpDcrEndpoint string = httpDcr.properties.logsIngestion.endpoint
+output httpDcrResourceId string = httpDcr.id
 output keyVaultName string = keyVault.name
 output keyVaultId string = keyVault.id
 output appInsightsKey string = appInsights.properties.InstrumentationKey

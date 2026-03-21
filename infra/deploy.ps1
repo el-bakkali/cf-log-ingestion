@@ -65,13 +65,16 @@ $deployment = az deployment group create `
 $dcrImmutableId    = $deployment.dcrImmutableId.value
 $dcrEndpoint       = $deployment.dcrEndpoint.value
 $dcrResourceId     = $deployment.dcrResourceId.value
+$httpDcrImmutableId = $deployment.httpDcrImmutableId.value
+$httpDcrEndpoint   = $deployment.httpDcrEndpoint.value
+$httpDcrResourceId = $deployment.httpDcrResourceId.value
 $kvId              = $deployment.keyVaultId.value
 $aiKey             = $deployment.appInsightsKey.value
 $aiConnectionStr   = $deployment.appInsightsConnectionString.value
 $workspaceId       = $deployment.workspaceId.value
 
-Write-Host "  DCR Immutable ID: $dcrImmutableId"
-Write-Host "  Ingestion Endpoint: $dcrEndpoint"
+Write-Host "  Firewall DCR:  $dcrImmutableId ($dcrEndpoint)"
+Write-Host "  HTTP DCR:      $httpDcrImmutableId ($httpDcrEndpoint)"
 
 # --- Create Flex Consumption Function App ---
 Write-Host "`n[4/7] Creating Flex Consumption Function App..." -ForegroundColor Yellow
@@ -108,14 +111,23 @@ Write-Host "`n[5/7] Assigning RBAC roles to Managed Identity..." -ForegroundColo
 Write-Host "  Waiting 20s for identity propagation..."
 Start-Sleep -Seconds 20
 
-# Monitoring Metrics Publisher on DCR (required for log ingestion)
+# Monitoring Metrics Publisher on Firewall DCR
 az role assignment create `
     --assignee-object-id $principalId `
     --assignee-principal-type ServicePrincipal `
     --role "Monitoring Metrics Publisher" `
     --scope $dcrResourceId `
     --output none
-Write-Host "  Monitoring Metrics Publisher on DCR"
+Write-Host "  Monitoring Metrics Publisher on Firewall DCR"
+
+# Monitoring Metrics Publisher on HTTP Requests DCR
+az role assignment create `
+    --assignee-object-id $principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role "Monitoring Metrics Publisher" `
+    --scope $httpDcrResourceId `
+    --output none
+Write-Host "  Monitoring Metrics Publisher on HTTP Requests DCR"
 
 # Key Vault Secrets User (to read the CF API token)
 az role assignment create `
@@ -139,6 +151,9 @@ $settingsFile = Join-Path $env:TEMP "cf-func-settings.json"
     @{ name = "DCR_IMMUTABLE_ID"; value = $dcrImmutableId }
     @{ name = "DCR_STREAM_NAME"; value = "Custom-CloudflareFirewall_CL" }
     @{ name = "DCR_ENDPOINT";    value = $dcrEndpoint }
+    @{ name = "HTTP_DCR_IMMUTABLE_ID"; value = $httpDcrImmutableId }
+    @{ name = "HTTP_DCR_STREAM_NAME"; value = "Custom-CloudflareHTTPRequests_CL" }
+    @{ name = "HTTP_DCR_ENDPOINT";    value = $httpDcrEndpoint }
 ) | ConvertTo-Json | Set-Content -Path $settingsFile
 
 az functionapp config appsettings set `
@@ -172,12 +187,13 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Resource Group:      $resourceGroup"
 Write-Host "Log Analytics:       $workspaceName"
-Write-Host "Custom Table:        CloudflareFirewall_CL"
-Write-Host "DCR:                 $dcrName ($dcrImmutableId)"
-Write-Host "Ingestion Endpoint:  $dcrEndpoint"
+Write-Host "Tables:              CloudflareFirewall_CL, CloudflareHTTPRequests_CL"
+Write-Host "Firewall DCR:        $dcrName ($dcrImmutableId)"
+Write-Host "HTTP Requests DCR:   dcr-cf-http-requests ($httpDcrImmutableId)"
 Write-Host "Key Vault:           $keyVaultName"
 Write-Host "Function App:        $functionAppName (Flex Consumption, Python 3.11)"
 Write-Host "Managed Identity:    $principalId"
 Write-Host ""
-Write-Host "The function runs every 1 minute. Check Application Insights" -ForegroundColor Yellow
-Write-Host "for execution logs, or query CloudflareFirewall_CL in Log Analytics." -ForegroundColor Yellow
+Write-Host "Two functions run every 1 minute:" -ForegroundColor Yellow
+Write-Host "  cf_log_ingestion  -> CloudflareFirewall_CL" -ForegroundColor Yellow
+Write-Host "  cf_http_ingestion -> CloudflareHTTPRequests_CL" -ForegroundColor Yellow
