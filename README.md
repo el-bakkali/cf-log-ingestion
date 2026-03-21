@@ -60,7 +60,7 @@ Each firewall event is mapped to a 23-column custom table:
 
 ### HTTP Requests (`CloudflareHTTPRequests_CL`)
 
-Each HTTP request group is mapped to a 23-column custom table:
+Each HTTP request group is mapped to a 16-column custom table (free plan fields):
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -68,23 +68,16 @@ Each HTTP request group is mapped to a 23-column custom table:
 | Zone | string | Cloudflare zone name |
 | RequestHost | string | HTTP host header |
 | RequestPath | string | HTTP request path |
-| RequestQuery | string | HTTP query string |
 | RequestMethod | string | HTTP method (GET, POST, etc.) |
 | HttpProtocol | string | HTTP protocol version |
-| RequestScheme | string | HTTP or HTTPS |
 | EdgeResponseStatus | int | Edge HTTP response status code |
 | OriginResponseStatus | int | Origin HTTP response status code |
 | CacheStatus | string | Cloudflare cache status (HIT, MISS, etc.) |
 | ClientIP | string | Client IP address |
 | ClientCountry | string | Client country name |
-| ClientASN | string | Client AS number |
-| ClientASNDescription | string | Client ASN organisation name |
 | ClientDeviceType | string | Device type (desktop, mobile, etc.) |
 | TLSVersion | string | TLS protocol version |
-| EdgeColo | string | Cloudflare edge colo code |
 | UserAgent | string | User agent string |
-| RefererHost | string | HTTP referer host |
-| ContentType | string | Response content type |
 | SampleInterval | int | Cloudflare sampling interval |
 | RequestCount | int | Number of requests in this group |
 
@@ -257,7 +250,7 @@ The deployment creates the following resources:
 |----------|------|---------|
 | Log Analytics Workspace | PerGB2018 (Analytics plan) | Log storage and KQL querying |
 | CloudflareFirewall_CL | Custom table (23 columns) | Firewall event data |
-| CloudflareHTTPRequests_CL | Custom table (23 columns) | HTTP request log data |
+| CloudflareHTTPRequests_CL | Custom table (16 columns) | HTTP request log data |
 | DCR: dcr-cf-firewall | Direct (no DCE) | Routes firewall events to table |
 | DCR: dcr-cf-http-requests | Direct (no DCE) | Routes HTTP request logs to table |
 | Storage Account | Standard LRS | Function App backing storage |

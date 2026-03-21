@@ -189,25 +189,17 @@ HTTP_REQUESTS_QUERY = """
           datetime
           clientRequestHTTPHost
           clientRequestPath
-          clientRequestQuery
           clientRequestHTTPMethodName
           clientRequestHTTPProtocol
-          clientRequestScheme
           edgeResponseStatus
+          originResponseStatus
           cacheStatus
           clientIP
           clientCountryName
-          clientAsn
-          clientASNDescription
           clientDeviceType
           clientSSLProtocol
-          coloCode
           userAgent
-          clientRefererHost
-          edgeResponseContentTypeName
           sampleInterval
-          originResponseStatus
-          upperTierColoName
         }
       }
     }
@@ -252,23 +244,16 @@ def transform_http_events(events: list, zone_name: str) -> list:
             "Zone": zone_name,
             "RequestHost": dims.get("clientRequestHTTPHost", ""),
             "RequestPath": dims.get("clientRequestPath", ""),
-            "RequestQuery": dims.get("clientRequestQuery", ""),
             "RequestMethod": dims.get("clientRequestHTTPMethodName", ""),
             "HttpProtocol": dims.get("clientRequestHTTPProtocol", ""),
-            "RequestScheme": dims.get("clientRequestScheme", ""),
             "EdgeResponseStatus": dims.get("edgeResponseStatus", 0),
             "OriginResponseStatus": dims.get("originResponseStatus", 0),
             "CacheStatus": dims.get("cacheStatus", ""),
             "ClientIP": dims.get("clientIP", ""),
             "ClientCountry": dims.get("clientCountryName", ""),
-            "ClientASN": str(dims.get("clientAsn", "")),
-            "ClientASNDescription": dims.get("clientASNDescription", ""),
             "ClientDeviceType": dims.get("clientDeviceType", ""),
             "TLSVersion": dims.get("clientSSLProtocol", ""),
-            "EdgeColo": dims.get("coloCode", ""),
             "UserAgent": dims.get("userAgent", ""),
-            "RefererHost": dims.get("clientRefererHost", ""),
-            "ContentType": dims.get("edgeResponseContentTypeName", ""),
             "SampleInterval": dims.get("sampleInterval", 1),
             "RequestCount": count,
         })
