@@ -2,7 +2,7 @@
 Azure Function: Cloudflare Log Ingestion to Azure Log Analytics
 Three timer triggers:
   1. cf_fw_ingestion      — Firewall events (firewallEventsAdaptive)
-  2. cf_http_ingestion    — HTTP request logs (httpRequestsAdaptiveGroups)
+  2. cf_http_ingestion    — HTTP request logs (httpRequestsAdaptive)
   3. cf_dns_ingestion     — DNS query logs (dnsAnalyticsAdaptive)
 All run every 1 minute, pulling from Cloudflare GraphQL API and ingesting
 into separate custom Log Analytics tables via the Logs Ingestion API.
