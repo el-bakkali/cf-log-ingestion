@@ -62,19 +62,23 @@ $deployment = az deployment group create `
     --query "properties.outputs" `
     --output json | ConvertFrom-Json
 
-$dcrImmutableId    = $deployment.dcrImmutableId.value
-$dcrEndpoint       = $deployment.dcrEndpoint.value
-$dcrResourceId     = $deployment.dcrResourceId.value
+$fwDcrImmutableId   = $deployment.fwDcrImmutableId.value
+$fwDcrEndpoint     = $deployment.fwDcrEndpoint.value
+$fwDcrResourceId   = $deployment.fwDcrResourceId.value
 $httpDcrImmutableId = $deployment.httpDcrImmutableId.value
 $httpDcrEndpoint   = $deployment.httpDcrEndpoint.value
 $httpDcrResourceId = $deployment.httpDcrResourceId.value
+$dnsDcrImmutableId = $deployment.dnsDcrImmutableId.value
+$dnsDcrEndpoint    = $deployment.dnsDcrEndpoint.value
+$dnsDcrResourceId  = $deployment.dnsDcrResourceId.value
 $kvId              = $deployment.keyVaultId.value
 $aiKey             = $deployment.appInsightsKey.value
 $aiConnectionStr   = $deployment.appInsightsConnectionString.value
 $workspaceId       = $deployment.workspaceId.value
 
-Write-Host "  Firewall DCR:  $dcrImmutableId ($dcrEndpoint)"
-Write-Host "  HTTP DCR:      $httpDcrImmutableId ($httpDcrEndpoint)"
+Write-Host "  Firewall DCR:  $fwDcrImmutableId"
+Write-Host "  HTTP DCR:      $httpDcrImmutableId"
+Write-Host "  DNS DCR:       $dnsDcrImmutableId"
 
 # --- Create Flex Consumption Function App ---
 Write-Host "`n[4/7] Creating Flex Consumption Function App..." -ForegroundColor Yellow
@@ -116,7 +120,7 @@ az role assignment create `
     --assignee-object-id $principalId `
     --assignee-principal-type ServicePrincipal `
     --role "Monitoring Metrics Publisher" `
-    --scope $dcrResourceId `
+    --scope $fwDcrResourceId `
     --output none
 Write-Host "  Monitoring Metrics Publisher on Firewall DCR"
 
@@ -128,6 +132,15 @@ az role assignment create `
     --scope $httpDcrResourceId `
     --output none
 Write-Host "  Monitoring Metrics Publisher on HTTP Requests DCR"
+
+# Monitoring Metrics Publisher on DNS DCR
+az role assignment create `
+    --assignee-object-id $principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role "Monitoring Metrics Publisher" `
+    --scope $dnsDcrResourceId `
+    --output none
+Write-Host "  Monitoring Metrics Publisher on DNS DCR"
 
 # Key Vault Secrets User (to read the CF API token)
 az role assignment create `
@@ -153,8 +166,9 @@ $settingsFile = Join-Path $env:TEMP "cf-func-settings.json"
     @{ name = "DCR_ENDPOINT";    value = $dcrEndpoint }
     @{ name = "HTTP_DCR_IMMUTABLE_ID"; value = $httpDcrImmutableId }
     @{ name = "HTTP_DCR_STREAM_NAME"; value = "Custom-CloudflareHTTPRequests_CL" }
-    @{ name = "HTTP_DCR_ENDPOINT";    value = $httpDcrEndpoint }
-) | ConvertTo-Json | Set-Content -Path $settingsFile
+    @{ name = "HTTP_DCR_ENDPOINT";    value = $httpDcrEndpoint }    @{ name = "DNS_DCR_IMMUTABLE_ID"; value = $dnsDcrImmutableId }
+    @{ name = "DNS_DCR_STREAM_NAME"; value = "Custom-CloudflareDNS_CL" }
+    @{ name = "DNS_DCR_ENDPOINT";    value = $dnsDcrEndpoint }) | ConvertTo-Json | Set-Content -Path $settingsFile
 
 az functionapp config appsettings set `
     --name $functionAppName `
@@ -187,13 +201,15 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Resource Group:      $resourceGroup"
 Write-Host "Log Analytics:       $workspaceName"
-Write-Host "Tables:              CloudflareFirewall_CL, CloudflareHTTPRequests_CL"
-Write-Host "Firewall DCR:        $dcrName ($dcrImmutableId)"
+Write-Host "Tables:              CloudflareFirewall_CL, CloudflareHTTPRequests_CL, CloudflareDNS_CL"
+Write-Host "Firewall DCR:        $dcrName ($fwDcrImmutableId)"
 Write-Host "HTTP Requests DCR:   dcr-cf-http-requests ($httpDcrImmutableId)"
+Write-Host "DNS DCR:             dcr-cf-dns ($dnsDcrImmutableId)"
 Write-Host "Key Vault:           $keyVaultName"
 Write-Host "Function App:        $functionAppName (Flex Consumption, Python 3.11)"
 Write-Host "Managed Identity:    $principalId"
 Write-Host ""
-Write-Host "Two functions run every 1 minute:" -ForegroundColor Yellow
-Write-Host "  cf_log_ingestion  -> CloudflareFirewall_CL" -ForegroundColor Yellow
+Write-Host "Three functions run every 1 minute:" -ForegroundColor Yellow
+Write-Host "  cf_fw_ingestion   -> CloudflareFirewall_CL" -ForegroundColor Yellow
 Write-Host "  cf_http_ingestion -> CloudflareHTTPRequests_CL" -ForegroundColor Yellow
+Write-Host "  cf_dns_ingestion  -> CloudflareDNS_CL" -ForegroundColor Yellow

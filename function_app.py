@@ -1,9 +1,10 @@
 """
 Azure Function: Cloudflare Log Ingestion to Azure Log Analytics
-Two timer triggers:
-  1. cf_log_ingestion     — Firewall events (firewallEventsAdaptive)
+Three timer triggers:
+  1. cf_fw_ingestion      — Firewall events (firewallEventsAdaptive)
   2. cf_http_ingestion    — HTTP request logs (httpRequestsAdaptiveGroups)
-Both run every 1 minute, pulling from Cloudflare GraphQL API and ingesting
+  3. cf_dns_ingestion     — DNS query logs (dnsAnalyticsAdaptive)
+All run every 1 minute, pulling from Cloudflare GraphQL API and ingesting
 into separate custom Log Analytics tables via the Logs Ingestion API.
 """
 
@@ -134,16 +135,16 @@ def send_to_log_analytics(logs: list, dcr_id: str, stream_name: str, endpoint: s
     arg_name="timer",
     run_on_startup=False,
 )
-def cf_log_ingestion(timer: func.TimerRequest) -> None:
+def cf_fw_ingestion(timer: func.TimerRequest) -> None:
     """Timer trigger: runs every 1 minute to pull Cloudflare firewall events."""
 
     if timer.past_due:
-        logging.warning("Timer is past due, running anyway")
+        logging.warning("FW ingestion timer is past due, running anyway")
 
     cf_token = os.environ["CF_API_TOKEN"]
-    dcr_id = os.environ["DCR_IMMUTABLE_ID"]
-    stream_name = os.environ.get("DCR_STREAM_NAME", "Custom-CloudflareFirewall_CL")
-    endpoint = os.environ["DCR_ENDPOINT"]
+    dcr_id = os.environ["FW_DCR_IMMUTABLE_ID"]
+    stream_name = os.environ.get("FW_DCR_STREAM_NAME", "Custom-CloudflareFirewall_CL")
+    endpoint = os.environ["FW_DCR_ENDPOINT"]
     zones = json.loads(os.environ["CF_ZONES"])
 
     # 1-minute non-overlapping window with 1-minute delay.
@@ -179,28 +180,31 @@ HTTP_REQUESTS_QUERY = """
 {
   viewer {
     zones(filter: {zoneTag: "%s"}) {
-      httpRequestsAdaptiveGroups(
+      httpRequestsAdaptive(
         filter: {datetime_gt: "%s", datetime_lt: "%s"}
         limit: 10000
         orderBy: [datetime_ASC]
       ) {
-        count
-        dimensions {
-          datetime
-          clientRequestHTTPHost
-          clientRequestPath
-          clientRequestHTTPMethodName
-          clientRequestHTTPProtocol
-          edgeResponseStatus
-          originResponseStatus
-          cacheStatus
-          clientIP
-          clientCountryName
-          clientDeviceType
-          clientSSLProtocol
-          userAgent
-          sampleInterval
-        }
+        datetime
+        clientRequestHTTPHost
+        clientRequestPath
+        clientRequestQuery
+        clientRequestHTTPMethodName
+        clientRequestHTTPProtocol
+        clientRequestScheme
+        edgeResponseStatus
+        originResponseStatus
+        originResponseDurationMs
+        cacheStatus
+        clientIP
+        clientCountryName
+        clientAsn
+        clientASNDescription
+        clientDeviceType
+        clientSSLProtocol
+        userAgent
+        userAgentBrowser
+        userAgentOS
       }
     }
   }
@@ -230,32 +234,35 @@ def query_cloudflare_http(cf_token: str, zone_id: str, time_start: str, time_end
     if not zones:
         return []
 
-    return zones[0].get("httpRequestsAdaptiveGroups", [])
+    return zones[0].get("httpRequestsAdaptive", [])
 
 
 def transform_http_events(events: list, zone_name: str) -> list:
     """Transform Cloudflare HTTP request events into Log Analytics table schema."""
     transformed = []
     for event in events:
-        dims = event.get("dimensions", {})
-        count = event.get("count", 1)
         transformed.append({
-            "TimeGenerated": dims.get("datetime", ""),
+            "TimeGenerated": event.get("datetime", ""),
             "Zone": zone_name,
-            "RequestHost": dims.get("clientRequestHTTPHost", ""),
-            "RequestPath": dims.get("clientRequestPath", ""),
-            "RequestMethod": dims.get("clientRequestHTTPMethodName", ""),
-            "HttpProtocol": dims.get("clientRequestHTTPProtocol", ""),
-            "EdgeResponseStatus": dims.get("edgeResponseStatus", 0),
-            "OriginResponseStatus": dims.get("originResponseStatus", 0),
-            "CacheStatus": dims.get("cacheStatus", ""),
-            "ClientIP": dims.get("clientIP", ""),
-            "ClientCountry": dims.get("clientCountryName", ""),
-            "ClientDeviceType": dims.get("clientDeviceType", ""),
-            "TLSVersion": dims.get("clientSSLProtocol", ""),
-            "UserAgent": dims.get("userAgent", ""),
-            "SampleInterval": dims.get("sampleInterval", 1),
-            "RequestCount": count,
+            "RequestHost": event.get("clientRequestHTTPHost", ""),
+            "RequestPath": event.get("clientRequestPath", ""),
+            "RequestQuery": event.get("clientRequestQuery", ""),
+            "RequestMethod": event.get("clientRequestHTTPMethodName", ""),
+            "HttpProtocol": event.get("clientRequestHTTPProtocol", ""),
+            "RequestScheme": event.get("clientRequestScheme", ""),
+            "EdgeResponseStatus": event.get("edgeResponseStatus", 0),
+            "OriginResponseStatus": event.get("originResponseStatus", 0),
+            "OriginResponseDurationMs": event.get("originResponseDurationMs", 0),
+            "CacheStatus": event.get("cacheStatus", ""),
+            "ClientIP": event.get("clientIP", ""),
+            "ClientCountry": event.get("clientCountryName", ""),
+            "ClientASN": str(event.get("clientAsn", "")),
+            "ClientASNDescription": event.get("clientASNDescription", ""),
+            "ClientDeviceType": event.get("clientDeviceType", ""),
+            "TLSVersion": event.get("clientSSLProtocol", ""),
+            "UserAgent": event.get("userAgent", ""),
+            "UserAgentBrowser": event.get("userAgentBrowser", ""),
+            "UserAgentOS": event.get("userAgentOS", ""),
         })
     return transformed
 
@@ -295,4 +302,123 @@ def cf_http_ingestion(timer: func.TimerRequest) -> None:
         return
 
     logging.info("Total HTTP request events to ingest: %d", len(all_events))
+    send_to_log_analytics(all_events, dcr_id, stream_name, endpoint)
+
+
+# ============================================================================
+# Function 3: Cloudflare DNS Query Logs
+# ============================================================================
+
+DNS_QUERY = """
+{
+  viewer {
+    zones(filter: {zoneTag: "%s"}) {
+      dnsAnalyticsAdaptive(
+        filter: {datetime_gt: "%s", datetime_lt: "%s"}
+        limit: 10000
+        orderBy: [datetime_ASC]
+      ) {
+        datetime
+        queryName
+        queryType
+        responseCode
+        sourceIP
+        protocol
+        coloName
+        destinationIP
+        ipVersion
+        querySize
+        responseSize
+        responseCached
+        sampleInterval
+      }
+    }
+  }
+}
+"""
+
+
+def query_cloudflare_dns(cf_token: str, zone_id: str, time_start: str, time_end: str) -> list:
+    """Query Cloudflare GraphQL API for DNS query events in a time window."""
+    headers = {
+        "Authorization": f"Bearer {cf_token}",
+        "Content-Type": "application/json",
+    }
+    query = DNS_QUERY % (zone_id, time_start, time_end)
+    payload = json.dumps({"query": query})
+
+    response = requests.post(GRAPHQL_URL, headers=headers, data=payload, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+
+    if result.get("errors"):
+        error_msg = result["errors"][0].get("message", "Unknown GraphQL error")
+        logging.error("Cloudflare GraphQL error for zone %s: %s", zone_id, error_msg)
+        return []
+
+    zones = result.get("data", {}).get("viewer", {}).get("zones", [])
+    if not zones:
+        return []
+
+    return zones[0].get("dnsAnalyticsAdaptive", [])
+
+
+def transform_dns_events(events: list, zone_name: str) -> list:
+    """Transform Cloudflare DNS events into Log Analytics table schema."""
+    transformed = []
+    for event in events:
+        transformed.append({
+            "TimeGenerated": event.get("datetime", ""),
+            "Zone": zone_name,
+            "QueryName": event.get("queryName", ""),
+            "QueryType": event.get("queryType", ""),
+            "ResponseCode": event.get("responseCode", ""),
+            "SourceIP": event.get("sourceIP", ""),
+            "Protocol": event.get("protocol", ""),
+            "ColoName": event.get("coloName", ""),
+            "DestinationIP": event.get("destinationIP", ""),
+            "IPVersion": event.get("ipVersion", 0),
+            "QuerySize": event.get("querySize", 0),
+            "ResponseSize": event.get("responseSize", 0),
+            "ResponseCached": event.get("responseCached", 0),
+            "SampleInterval": event.get("sampleInterval", 1),
+        })
+    return transformed
+
+
+@app.timer_trigger(
+    schedule="0 */1 * * * *",
+    arg_name="timer",
+    run_on_startup=False,
+)
+def cf_dns_ingestion(timer: func.TimerRequest) -> None:
+    """Timer trigger: runs every 1 minute to pull Cloudflare DNS query events."""
+
+    if timer.past_due:
+        logging.warning("DNS ingestion timer is past due, running anyway")
+
+    cf_token = os.environ["CF_API_TOKEN"]
+    dcr_id = os.environ["DNS_DCR_IMMUTABLE_ID"]
+    stream_name = os.environ.get("DNS_DCR_STREAM_NAME", "Custom-CloudflareDNS_CL")
+    endpoint = os.environ["DNS_DCR_ENDPOINT"]
+    zones = json.loads(os.environ["CF_ZONES"])
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    time_end = (now - datetime.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    time_start = (now - datetime.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    logging.info("Querying Cloudflare DNS: %s to %s", time_start, time_end)
+
+    all_events = []
+    for zone in zones:
+        events = query_cloudflare_dns(cf_token, zone["id"], time_start, time_end)
+        logging.info("Zone %s: %d DNS events", zone["name"], len(events))
+        transformed = transform_dns_events(events, zone["name"])
+        all_events.extend(transformed)
+
+    if not all_events:
+        logging.info("No DNS events to ingest")
+        return
+
+    logging.info("Total DNS events to ingest: %d", len(all_events))
     send_to_log_analytics(all_events, dcr_id, stream_name, endpoint)

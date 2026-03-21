@@ -1,6 +1,6 @@
 // ============================================================================
 // Cloudflare Log Ingestion — Azure Infrastructure
-// Deploys: Log Analytics, Custom Table, DCR, Storage, Key Vault, App Insights
+// Deploys: Log Analytics, 3 Custom Tables, 3 DCRs, Storage, Key Vault, App Insights
 // Usage: az deployment group create -g <rg-name> -f main.bicep -p cfApiToken='<token>'
 // ============================================================================
 
@@ -22,6 +22,9 @@ param dcrName string = 'dcr-cf-firewall'
 
 @description('Data Collection Rule name for HTTP request logs.')
 param httpDcrName string = 'dcr-cf-http-requests'
+
+@description('Data Collection Rule name for DNS query logs.')
+param dnsDcrName string = 'dcr-cf-dns'
 
 @description('Storage account name (must be globally unique, 3-24 chars, lowercase alphanumeric).')
 param storageName string
@@ -155,7 +158,7 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
 }
 
 // ============================================================================
-// Custom Table: CloudflareHTTPRequests_CL (16 columns)
+// Custom Table: CloudflareHTTPRequests_CL (21 columns)
 // ============================================================================
 
 resource httpTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
@@ -169,18 +172,23 @@ resource httpTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' 
         { name: 'Zone', type: 'string', description: 'Cloudflare zone name' }
         { name: 'RequestHost', type: 'string', description: 'HTTP host header' }
         { name: 'RequestPath', type: 'string', description: 'HTTP request path' }
-        { name: 'RequestMethod', type: 'string', description: 'HTTP method (GET, POST, etc.)' }
+        { name: 'RequestQuery', type: 'string', description: 'HTTP query string' }
+        { name: 'RequestMethod', type: 'string', description: 'HTTP method' }
         { name: 'HttpProtocol', type: 'string', description: 'HTTP protocol version' }
-        { name: 'EdgeResponseStatus', type: 'int', description: 'Edge HTTP response status code' }
-        { name: 'OriginResponseStatus', type: 'int', description: 'Origin HTTP response status code' }
-        { name: 'CacheStatus', type: 'string', description: 'Cloudflare cache status (HIT, MISS, etc.)' }
+        { name: 'RequestScheme', type: 'string', description: 'HTTP or HTTPS' }
+        { name: 'EdgeResponseStatus', type: 'int', description: 'Edge response status code' }
+        { name: 'OriginResponseStatus', type: 'int', description: 'Origin response status code' }
+        { name: 'OriginResponseDurationMs', type: 'int', description: 'Origin response time in ms' }
+        { name: 'CacheStatus', type: 'string', description: 'Cache status (HIT, MISS, etc.)' }
         { name: 'ClientIP', type: 'string', description: 'Client IP address' }
         { name: 'ClientCountry', type: 'string', description: 'Client country name' }
+        { name: 'ClientASN', type: 'string', description: 'Client AS number' }
+        { name: 'ClientASNDescription', type: 'string', description: 'Client ASN organisation name' }
         { name: 'ClientDeviceType', type: 'string', description: 'Device type (desktop, mobile, etc.)' }
         { name: 'TLSVersion', type: 'string', description: 'TLS protocol version' }
         { name: 'UserAgent', type: 'string', description: 'User agent string' }
-        { name: 'SampleInterval', type: 'int', description: 'Cloudflare sampling interval' }
-        { name: 'RequestCount', type: 'int', description: 'Number of requests in this group' }
+        { name: 'UserAgentBrowser', type: 'string', description: 'Browser name' }
+        { name: 'UserAgentOS', type: 'string', description: 'OS name' }
       ]
     }
     retentionInDays: 90
@@ -203,18 +211,23 @@ resource httpDcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
           { name: 'Zone', type: 'string' }
           { name: 'RequestHost', type: 'string' }
           { name: 'RequestPath', type: 'string' }
+          { name: 'RequestQuery', type: 'string' }
           { name: 'RequestMethod', type: 'string' }
           { name: 'HttpProtocol', type: 'string' }
+          { name: 'RequestScheme', type: 'string' }
           { name: 'EdgeResponseStatus', type: 'int' }
           { name: 'OriginResponseStatus', type: 'int' }
+          { name: 'OriginResponseDurationMs', type: 'int' }
           { name: 'CacheStatus', type: 'string' }
           { name: 'ClientIP', type: 'string' }
           { name: 'ClientCountry', type: 'string' }
+          { name: 'ClientASN', type: 'string' }
+          { name: 'ClientASNDescription', type: 'string' }
           { name: 'ClientDeviceType', type: 'string' }
           { name: 'TLSVersion', type: 'string' }
           { name: 'UserAgent', type: 'string' }
-          { name: 'SampleInterval', type: 'int' }
-          { name: 'RequestCount', type: 'int' }
+          { name: 'UserAgentBrowser', type: 'string' }
+          { name: 'UserAgentOS', type: 'string' }
         ]
       }
     }
@@ -236,6 +249,86 @@ resource httpDcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
     ]
   }
   dependsOn: [ httpTable ]
+}
+
+// ============================================================================
+// Custom Table: CloudflareDNS_CL (14 columns)
+// ============================================================================
+
+resource dnsTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'CloudflareDNS_CL'
+  properties: {
+    schema: {
+      name: 'CloudflareDNS_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'dateTime', description: 'Query timestamp' }
+        { name: 'Zone', type: 'string', description: 'Cloudflare zone name' }
+        { name: 'QueryName', type: 'string', description: 'Domain queried' }
+        { name: 'QueryType', type: 'string', description: 'DNS record type (A, AAAA, MX, etc.)' }
+        { name: 'ResponseCode', type: 'string', description: 'DNS response status (NOERROR, NXDOMAIN, etc.)' }
+        { name: 'SourceIP', type: 'string', description: 'Resolver IP address' }
+        { name: 'Protocol', type: 'string', description: 'Transport protocol (UDP, TCP)' }
+        { name: 'ColoName', type: 'string', description: 'Cloudflare data centre code' }
+        { name: 'DestinationIP', type: 'string', description: 'CF nameserver IP that handled the query' }
+        { name: 'IPVersion', type: 'int', description: 'IP version (4 or 6)' }
+        { name: 'QuerySize', type: 'int', description: 'Query size in bytes' }
+        { name: 'ResponseSize', type: 'int', description: 'Response size in bytes' }
+        { name: 'ResponseCached', type: 'int', description: 'Whether response was served from cache' }
+        { name: 'SampleInterval', type: 'int', description: 'Sampling interval' }
+      ]
+    }
+    retentionInDays: 90
+  }
+}
+
+// ============================================================================
+// Data Collection Rule: DNS Queries (Direct ingestion, no DCE required)
+// ============================================================================
+
+resource dnsDcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
+  name: dnsDcrName
+  location: location
+  kind: 'Direct'
+  properties: {
+    streamDeclarations: {
+      'Custom-CloudflareDNS_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'Zone', type: 'string' }
+          { name: 'QueryName', type: 'string' }
+          { name: 'QueryType', type: 'string' }
+          { name: 'ResponseCode', type: 'string' }
+          { name: 'SourceIP', type: 'string' }
+          { name: 'Protocol', type: 'string' }
+          { name: 'ColoName', type: 'string' }
+          { name: 'DestinationIP', type: 'string' }
+          { name: 'IPVersion', type: 'int' }
+          { name: 'QuerySize', type: 'int' }
+          { name: 'ResponseSize', type: 'int' }
+          { name: 'ResponseCached', type: 'int' }
+          { name: 'SampleInterval', type: 'int' }
+        ]
+      }
+    }
+    destinations: {
+      logAnalytics: [
+        {
+          workspaceResourceId: workspace.id
+          name: 'LogAnalyticsDest'
+        }
+      ]
+    }
+    dataFlows: [
+      {
+        streams: [ 'Custom-CloudflareDNS_CL' ]
+        destinations: [ 'LogAnalyticsDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-CloudflareDNS_CL'
+      }
+    ]
+  }
+  dependsOn: [ dnsTable ]
 }
 
 // ============================================================================
@@ -303,12 +396,15 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 
 output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
-output dcrImmutableId string = dcr.properties.immutableId
-output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
-output dcrResourceId string = dcr.id
+output fwDcrImmutableId string = dcr.properties.immutableId
+output fwDcrEndpoint string = dcr.properties.logsIngestion.endpoint
+output fwDcrResourceId string = dcr.id
 output httpDcrImmutableId string = httpDcr.properties.immutableId
 output httpDcrEndpoint string = httpDcr.properties.logsIngestion.endpoint
 output httpDcrResourceId string = httpDcr.id
+output dnsDcrImmutableId string = dnsDcr.properties.immutableId
+output dnsDcrEndpoint string = dnsDcr.properties.logsIngestion.endpoint
+output dnsDcrResourceId string = dnsDcr.id
 output keyVaultName string = keyVault.name
 output keyVaultId string = keyVault.id
 output appInsightsKey string = appInsights.properties.InstrumentationKey
