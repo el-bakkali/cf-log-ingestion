@@ -52,7 +52,6 @@ $deployment = az deployment group create `
     --template-file "$PSScriptRoot\main.bicep" `
     --parameters `
         cfApiToken=$cfApiToken `
-        cfZones=$cfZones `
         storageName=$storageName `
         functionAppName=$functionAppName `
         keyVaultName=$keyVaultName `
@@ -159,16 +158,18 @@ $kvRef = "@Microsoft.KeyVault(SecretUri=https://${keyVaultName}.vault.azure.net/
 # Write settings to a temp JSON file to avoid shell escaping issues
 $settingsFile = Join-Path $env:TEMP "cf-func-settings.json"
 @(
-    @{ name = "CF_API_TOKEN";    value = $kvRef }
-    @{ name = "CF_ZONES";        value = $cfZones }
-    @{ name = "DCR_IMMUTABLE_ID"; value = $dcrImmutableId }
-    @{ name = "DCR_STREAM_NAME"; value = "Custom-CloudflareFirewall_CL" }
-    @{ name = "DCR_ENDPOINT";    value = $dcrEndpoint }
+    @{ name = "CF_API_TOKEN";          value = $kvRef }
+    @{ name = "CF_ZONES";              value = $cfZones }
+    @{ name = "FW_DCR_IMMUTABLE_ID";   value = $fwDcrImmutableId }
+    @{ name = "FW_DCR_STREAM_NAME";    value = "Custom-CloudflareFirewall_CL" }
+    @{ name = "FW_DCR_ENDPOINT";       value = $fwDcrEndpoint }
     @{ name = "HTTP_DCR_IMMUTABLE_ID"; value = $httpDcrImmutableId }
-    @{ name = "HTTP_DCR_STREAM_NAME"; value = "Custom-CloudflareHTTPRequests_CL" }
-    @{ name = "HTTP_DCR_ENDPOINT";    value = $httpDcrEndpoint }    @{ name = "DNS_DCR_IMMUTABLE_ID"; value = $dnsDcrImmutableId }
-    @{ name = "DNS_DCR_STREAM_NAME"; value = "Custom-CloudflareDNS_CL" }
-    @{ name = "DNS_DCR_ENDPOINT";    value = $dnsDcrEndpoint }) | ConvertTo-Json | Set-Content -Path $settingsFile
+    @{ name = "HTTP_DCR_STREAM_NAME";  value = "Custom-CloudflareHTTPRequests_CL" }
+    @{ name = "HTTP_DCR_ENDPOINT";     value = $httpDcrEndpoint }
+    @{ name = "DNS_DCR_IMMUTABLE_ID";  value = $dnsDcrImmutableId }
+    @{ name = "DNS_DCR_STREAM_NAME";   value = "Custom-CloudflareDNS_CL" }
+    @{ name = "DNS_DCR_ENDPOINT";      value = $dnsDcrEndpoint }
+) | ConvertTo-Json | Set-Content -Path $settingsFile
 
 az functionapp config appsettings set `
     --name $functionAppName `
