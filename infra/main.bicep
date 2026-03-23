@@ -11,9 +11,6 @@ param location string = resourceGroup().location
 @secure()
 param cfApiToken string
 
-@description('Cloudflare zones as a JSON array. Example: [{"id":"abc123","name":"example.com"}]')
-param cfZones string
-
 @description('Log Analytics workspace name.')
 param workspaceName string = 'law-cf-security'
 
@@ -37,9 +34,6 @@ param keyVaultName string
 
 @description('Log Analytics daily cap in GB. Set to -1 for unlimited.')
 param lawDailyCapGb int = 1
-
-@description('App Insights daily cap in GB.')
-param appInsightsDailyCapGb string = '0.5'
 
 // ============================================================================
 // Log Analytics Workspace
@@ -397,13 +391,13 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
 output fwDcrImmutableId string = dcr.properties.immutableId
-output fwDcrEndpoint string = dcr.properties.logsIngestion.endpoint
+output fwDcrEndpoint string = any(dcr.properties).logsIngestion.endpoint
 output fwDcrResourceId string = dcr.id
 output httpDcrImmutableId string = httpDcr.properties.immutableId
-output httpDcrEndpoint string = httpDcr.properties.logsIngestion.endpoint
+output httpDcrEndpoint string = any(httpDcr.properties).logsIngestion.endpoint
 output httpDcrResourceId string = httpDcr.id
 output dnsDcrImmutableId string = dnsDcr.properties.immutableId
-output dnsDcrEndpoint string = dnsDcr.properties.logsIngestion.endpoint
+output dnsDcrEndpoint string = any(dnsDcr.properties).logsIngestion.endpoint
 output dnsDcrResourceId string = dnsDcr.id
 output keyVaultName string = keyVault.name
 output keyVaultId string = keyVault.id
